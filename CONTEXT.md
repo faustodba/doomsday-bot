@@ -40,7 +40,7 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 | Modulo | Descrizione |
 |--------|-------------|
 | `main.py` | Entry point, argomenti `--istanze` / `--emulatore` (retrocompat) |
-| `raccolta.py` | Flusso principale raccolta risorse (V5.7) |
+| `raccolta.py` | Flusso principale raccolta risorse (V5.10) |
 | `alleanza.py` | Automazione menu Alleanza/Dono |
 | `messaggi.py` | Gestione messaggi in-game |
 | `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.2) |
@@ -113,6 +113,28 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 
 ---
 
+## Logica raccolta risorse (raccolta.py V5.10)
+
+### Loop invio squadre
+- **Loop `while`**: continua finché `attive_correnti < obiettivo` (obiettivo = totale slot)
+- **Lettura reale** del contatore squadre dopo ogni MARCIA (non calcolo progressivo)
+- **Max 3 fallimenti consecutivi** prima di abbandonare — reset ad ogni conferma squadra
+- **Blacklist TTL fisso:** 120s — il nodo NON viene rimosso alla conferma marcia
+- **Blacklist rilasciata** se errore prima del tap MARCIA (marcia_inviata=False)
+- **Blacklist rilasciata** se squadra respinta (contatore invariato dopo retry)
+- **OCR fail post-MARCIA:** retry dopo 3s prima di contare come fallimento
+  - ancora -1 → fallimento reale
+  - aumentato → confermata con ritardo (fallimenti_cons = 0)
+  - invariato → respinta → rilascia blacklist
+- **Tipi bloccati:** se nodo sempre in blacklist per un tipo → skip tutte le squadre di quel tipo
+- **Uscita anticipata** se tutti i tipi disponibili sono bloccati
+
+### _tap_invia_squadra → ritorna (chiave_nodo, nodo_bloccato, marcia_inviata)
+- `marcia_inviata=True` → MARCIA eseguita (anche se squadra poi respinta)
+- `marcia_inviata=False` → errore prima di MARCIA → chiamante rilascia blacklist
+
+---
+
 ## Logica timing (timing.py)
 - **EWMA** alpha=0.3
 - **Outlier detection** z-score
@@ -156,6 +178,9 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 - **Semaforo** per limitare a max 2 istanze parallele
 - **EWMA** per adaptive timing (non usare sleep fissi)
 - **Screenshot PRIMA del tap** sul nodo per OCR affidabile
+- **Loop while** per raccolta (non range fisso) — continua finché slot liberi
+- **Lettura reale** contatore post-MARCIA (non calcolo progressivo `attive_attese`)
+- **3 fallimenti consecutivi** come soglia abbandono raccolta
 
 ---
 
@@ -169,6 +194,9 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 | V5.5 | Screenshot prima del tap nodo |
 | V5.6 | raccolta.py refactor |
 | V5.7 | rifornimento integrato nel flusso principale |
+| V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
+| V5.9 | Fix blacklist: prenotata dopo tap nodo, rilasciata su errore; lettura reale post-MARCIA; max 3 fallimenti consecutivi |
+| V5.10 | OCR fail post-MARCIA: retry 3s prima di contare fallimento; loop while invece di range fisso |
 
 ---
 
