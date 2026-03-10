@@ -264,26 +264,35 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
     fallimenti_cons    = 0   # fallimenti consecutivi — reset ad ogni successo
     MAX_FALLIMENTI     = 3   # max fallimenti consecutivi prima di abbandonare
     tipi_bloccati      = set()
-    squadra_n          = 0   # contatore squadre tentate
+    squadra_n          = 0   # contatore squadre tentate (per sequenza tipo)
 
     # Lettura reale attive — aggiornata dopo ogni MARCIA
     attive_correnti = attive_inizio
 
-    for i in range(da_inviare):
-        tipo = sequenza[i % len(sequenza)]
-        squadra_n += 1
-
-        # Se tipo bloccato da blacklist, salta
-        if tipo in tipi_bloccati:
-            log(f"Squadra {squadra_n} -> {tipo} saltata (tipo bloccato da blacklist)")
-            continue
-
+    # Loop while: continua finché ci sono slot liberi (attive_correnti < obiettivo)
+    # Esce per: fallimenti consecutivi >= MAX_FALLIMENTI, tutti i tipi bloccati,
+    #           o errore fatale (no mappa) gestito con return interno
+    while attive_correnti < obiettivo:
         # Abbandona se troppi fallimenti consecutivi
         if fallimenti_cons >= MAX_FALLIMENTI:
             log(f"Troppi fallimenti consecutivi ({fallimenti_cons}) - abbandono raccolta")
             break
 
-        log(f"Invio squadra {squadra_n}/{da_inviare} -> {tipo} (fallimenti cons: {fallimenti_cons}/{MAX_FALLIMENTI})")
+        # Abbandona se tutti i tipi disponibili sono bloccati
+        tipi_disponibili = [t for t in set(sequenza) if t not in tipi_bloccati]
+        if not tipi_disponibili:
+            log("Tutti i tipi bloccati da blacklist - abbandono raccolta")
+            break
+
+        tipo = sequenza[squadra_n % len(sequenza)]
+        squadra_n += 1
+
+        # Se tipo bloccato da blacklist, salta al prossimo (senza contare fallimento)
+        if tipo in tipi_bloccati:
+            log(f"Tentativo {squadra_n} -> {tipo} saltato (tipo bloccato da blacklist)")
+            continue
+
+        log(f"Tentativo {squadra_n} -> {tipo} | attive: {attive_correnti}/{obiettivo} | fallimenti cons: {fallimenti_cons}/{MAX_FALLIMENTI}")
 
         chiave_nodo, nodo_bloccato, marcia_inviata = _tap_invia_squadra(
             porta, tipo, n_truppe, nome, squadra_n, 1, ciclo,
@@ -402,6 +411,6 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
                 fallimenti_cons += 1
 
     stato.vai_in_home(porta, nome, logger)
-    log(f"Raccolta completata - {inviate}/{da_inviare} squadre inviate")
-    _log.registra_evento(ciclo, nome, "completata", dettaglio=f"inviate={inviate}/{da_inviare}")
+    log(f"Raccolta completata - {inviate} squadre inviate (obiettivo: {obiettivo}/{totale})")
+    _log.registra_evento(ciclo, nome, "completata", dettaglio=f"inviate={inviate} obiettivo={obiettivo}/{totale}")
     return inviate
