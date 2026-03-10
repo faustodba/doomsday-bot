@@ -110,6 +110,12 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
     _blacklist_nodi      = {}
     _blacklist_nodi_lock = threading.Lock()
 
+    # Snapshot PID: popolato subito dopo avvia_blocco(), prima che chiudi_istanza()
+    # rimuova i PID dal registro. Garantisce che cleanup_istanze_appese() conosca
+    # tutti i PID avviati nel ciclo, anche quelli già chiusi correttamente.
+    _pids_snapshot      = set()
+    _pids_snapshot_lock = threading.Lock()
+
     def fn_raccolta(ist):
         nome   = ist[0]
         porta  = ist[2]
@@ -121,7 +127,8 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
                                          blacklist_lock=_blacklist_nodi_lock)
 
     def worker(ist):
-        nome = ist[0]
+        nome    = ist[0]
+        interno = ist[1]
 
         # Acquisisce slot: se ISTANZE_BLOCCO già attive, aspetta qui
         semaforo.acquire()
@@ -134,6 +141,13 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
                 log.logger(nome, "Avvio fallito - salto")
                 risultati[nome] = -1
                 return
+
+            # Snapshot PID subito dopo avvio, prima che chiudi_istanza() lo rimuova
+            with emulatore._pids_lock:
+                pid = emulatore._pids_istanze.get(interno, 0)
+            if pid:
+                with _pids_snapshot_lock:
+                    _pids_snapshot.add(pid)
 
             # Attesa iniziale caricamento (per-istanza, non blocca le altre)
             log.logger("BS", f"[{nome}] Attesa iniziale {config.DELAY_CARICA_INIZ}s caricamento...")
@@ -163,9 +177,10 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
     for t in threads:
         t.join()
 
-    # Cleanup finale: killa eventuali processi emulatore rimasti appesi
-    pids_gestiti_ciclo = set(emulatore._pids_istanze.values())
-    emulatore.cleanup_istanze_appese(pids_gestiti_ciclo, log.logger)
+    # Cleanup finale: usa lo snapshot PID costruito durante il ciclo.
+    # A questo punto _pids_istanze è già svuotato da chiudi_istanza(),
+    # quindi lo snapshot è l'unica fonte affidabile dei PID gestiti.
+    emulatore.cleanup_istanze_appese(_pids_snapshot, log.logger)
 
     totale_inviate = sum(v for v in risultati.values() if v >= 0)
     totale_errori  = sum(1 for v in risultati.values() if v == -1)
