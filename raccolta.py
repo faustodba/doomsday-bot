@@ -85,25 +85,18 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
     """
     Cerca nodo, verifica blacklist, tap nodo e invia squadra.
 
-    Logica blacklist:
-      1. CERCA → leggi coordinate nodo
-      2. Se nodo in blacklist → riprova CERCA (lente+tipo+cerca)
-      3. Se il gioco ripropone STESSO nodo → aspetta BLACKLIST_ATTESA_NODO secondi
-      4. Riprova CERCA ancora una volta
-      5. Se ancora stesso nodo → ritorna (chiave=None, nodo_bloccato=True)
-      6. Se nodo diverso → procedi normalmente
-
-    Ritorna: (chiave_nodo, nodo_bloccato)
-      chiave_nodo:   stringa "X_Y" del nodo prenotato, oppure None
-      nodo_bloccato: True se il gioco continua a proporre un nodo in blacklist
-                     e non è possibile inviare la squadra
+    Ritorna: (chiave_nodo, nodo_bloccato, marcia_inviata)
+      chiave_nodo:    stringa "X_Y" del nodo prenotato, oppure None
+      nodo_bloccato:  True se il gioco continua a proporre un nodo in blacklist
+      marcia_inviata: True se il tap MARCIA è stato eseguito (anche se squadra respinta)
+                      False se errore prima di MARCIA (blacklist va rilasciata dal chiamante)
     """
     def log(msg):
         if logger: logger(nome, msg)
 
     chiave_nodo = None
 
-    # --- FASE 1+2+3: CERCA → leggi coordinate → verifica blacklist ---
+    # --- FASE 1: CERCA → leggi coordinate → verifica blacklist ---
     _cerca_nodo(porta, tipo)
     chiave_nodo, cx, cy, screen_nodo = _leggi_coord_nodo(
         porta, nome, tipo, squadra, tentativo, 1, logger)
@@ -116,8 +109,6 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
         time.sleep(0.5)
         adb.tap(porta, config.TAP_NODO)
         time.sleep(0.8)
-        # Prenota placeholder in blacklist non possibile — procedi
-        chiave_nodo = None
     else:
         in_blacklist = _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo)
 
@@ -127,7 +118,7 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
                                f"{cx}_{cy}_r1")
             chiave_primo = chiave_nodo
 
-            # --- Retry immediato: lente+tipo+CERCA ---
+            # Retry immediato: lente+tipo+CERCA
             _cerca_nodo(porta, tipo)
             chiave_nodo, cx, cy, screen_nodo = _leggi_coord_nodo(
                 porta, nome, tipo, squadra, tentativo, 2, logger)
@@ -142,24 +133,21 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
                     porta, nome, tipo, squadra, tentativo, 3, logger)
 
                 if chiave_nodo == chiave_primo or chiave_nodo is None:
-                    # Ancora stesso nodo dopo attesa — segnala nodo bloccato
                     log(f"Nodo ({chiave_primo}) ancora bloccato dopo attesa - abbandono tipo {tipo}")
                     debug.salva_screen(screen_nodo, nome, "fase3_blacklist_bloccato",
                                        squadra, tentativo, chiave_primo)
-                    # Chiudi popup con BACK
                     adb.keyevent(porta, "KEYCODE_BACK")
                     time.sleep(0.5)
-                    return None, True   # nodo_bloccato=True
+                    return None, True, False  # nodo_bloccato
 
-            # Nodo diverso trovato — verifica non sia anch'esso in blacklist
-            in_blacklist2 = _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo)
-            if in_blacklist2:
+            # Verifica che il nuovo nodo non sia anch'esso in blacklist
+            if chiave_nodo and _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo):
                 log(f"Anche il nuovo nodo ({cx},{cy}) è in blacklist - abbandono")
                 adb.keyevent(porta, "KEYCODE_BACK")
                 time.sleep(0.5)
-                return None, True
+                return None, True, False  # nodo_bloccato
 
-        # --- FASE 4: nodo libero — tap nodo ---
+        # --- FASE 4: nodo libero — tap nodo + prenota blacklist ---
         log(f"[FASE4] Nodo ({cx},{cy}) libero - tap nodo")
         adb.tap(porta, config.TAP_NODO)
         time.sleep(0.8)
@@ -168,27 +156,32 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
         debug.salva_screen(screen_popup, nome, "fase4_popup_raccogli", squadra, tentativo,
                            f"{cx}_{cy}")
 
-        # Prenota in blacklist
+        # Prenota in blacklist subito dopo tap nodo
         if blacklist is not None and blacklist_lock is not None and chiave_nodo:
             with blacklist_lock:
                 blacklist[chiave_nodo] = time.time()
                 log(f"Nodo ({cx},{cy}) prenotato in blacklist")
 
-    # Procedi con RACCOGLI → SQUADRA → (truppe) → MARCIA
-    adb.tap(porta, config.TAP_RACCOGLI)
-    adb.tap(porta, config.TAP_SQUADRA)
-    time.sleep(1.5)
-    if n_truppe > 0:
-        adb.tap(porta, config.TAP_CANCELLA);      time.sleep(0.6)
-        adb.tap(porta, config.TAP_CAMPO_TESTO);   time.sleep(0.6)
-        adb.keyevent(porta, "KEYCODE_CTRL_A");     time.sleep(0.2)
-        adb.keyevent(porta, "KEYCODE_DEL");        time.sleep(0.2)
-        adb.input_text(porta, str(n_truppe));      time.sleep(0.4)
-        adb.tap(porta, config.TAP_OK_TASTIERA);    time.sleep(0.4)
-    screen_pre = adb.screenshot(porta)
-    debug.salva_screen(screen_pre, nome, "pre_marcia", squadra, tentativo)
-    adb.tap(porta, config.TAP_MARCIA)
-    return chiave_nodo, False   # nodo_bloccato=False
+    # --- FASE 5: RACCOGLI → SQUADRA → (truppe) → MARCIA ---
+    # Se qualcosa va storto qui, il chiamante rilascia la blacklist (marcia_inviata=False)
+    try:
+        adb.tap(porta, config.TAP_RACCOGLI)
+        adb.tap(porta, config.TAP_SQUADRA)
+        time.sleep(1.5)
+        if n_truppe > 0:
+            adb.tap(porta, config.TAP_CANCELLA);      time.sleep(0.6)
+            adb.tap(porta, config.TAP_CAMPO_TESTO);   time.sleep(0.6)
+            adb.keyevent(porta, "KEYCODE_CTRL_A");     time.sleep(0.2)
+            adb.keyevent(porta, "KEYCODE_DEL");        time.sleep(0.2)
+            adb.input_text(porta, str(n_truppe));      time.sleep(0.4)
+            adb.tap(porta, config.TAP_OK_TASTIERA);    time.sleep(0.4)
+        screen_pre = adb.screenshot(porta)
+        debug.salva_screen(screen_pre, nome, "pre_marcia", squadra, tentativo)
+        adb.tap(porta, config.TAP_MARCIA)
+        return chiave_nodo, False, True   # marcia_inviata=True
+    except Exception as e:
+        log(f"Errore durante sequenza RACCOGLI→MARCIA: {e}")
+        return chiave_nodo, False, False  # marcia_inviata=False → chiamante rilascia blacklist
 
 def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo=0,
                      blacklist=None, blacklist_lock=None):
@@ -262,151 +255,151 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         stato.vai_in_home(porta, nome, logger)
         return 0
 
+    obiettivo     = totale  # vogliamo sempre riempire tutti gli slot
     da_inviare    = libere if max_squadre == 0 else min(libere, max_squadre)
-    attive_attese = attive_inizio
-    log(f"Obiettivo: {attive_inizio + da_inviare}/{totale} (da inviare: {da_inviare})")
+    log(f"Obiettivo: {obiettivo}/{totale} (da inviare: {da_inviare})")
     _status.istanza_target(nome, da_inviare)
 
-    inviate = 0
-    tipi_bloccati = set()  # tipi per cui il nodo è bloccato — skip squadre successive dello stesso tipo
+    inviate            = 0
+    fallimenti_cons    = 0   # fallimenti consecutivi — reset ad ogni successo
+    MAX_FALLIMENTI     = 3   # max fallimenti consecutivi prima di abbandonare
+    tipi_bloccati      = set()
+    squadra_n          = 0   # contatore squadre tentate
+
+    # Lettura reale attive — aggiornata dopo ogni MARCIA
+    attive_correnti = attive_inizio
 
     for i in range(da_inviare):
-        tipo     = sequenza[i % len(sequenza)]
-        riuscita = False
-        ocr_fail_consecutivi = 0
+        tipo = sequenza[i % len(sequenza)]
+        squadra_n += 1
 
-        # Se questo tipo è bloccato, salta direttamente
+        # Se tipo bloccato da blacklist, salta
         if tipo in tipi_bloccati:
-            log(f"Squadra {i+1}/{da_inviare} -> {tipo} saltata (tipo bloccato da blacklist)")
+            log(f"Squadra {squadra_n} -> {tipo} saltata (tipo bloccato da blacklist)")
             continue
 
-        for tentativo in range(1, config.MAX_TENTATIVI_RACCOLTA + 1):
-            log(f"Invio squadra {i+1}/{da_inviare} -> {tipo} (tentativo {tentativo}/{config.MAX_TENTATIVI_RACCOLTA})")
+        # Abbandona se troppi fallimenti consecutivi
+        if fallimenti_cons >= MAX_FALLIMENTI:
+            log(f"Troppi fallimenti consecutivi ({fallimenti_cons}) - abbandono raccolta")
+            break
 
-            chiave_nodo, nodo_bloccato = _tap_invia_squadra(
-                porta, tipo, n_truppe, nome, i+1, tentativo, ciclo,
-                logger, blacklist, blacklist_lock)
+        log(f"Invio squadra {squadra_n}/{da_inviare} -> {tipo} (fallimenti cons: {fallimenti_cons}/{MAX_FALLIMENTI})")
 
-            if nodo_bloccato:
-                log(f"Tipo '{tipo}' bloccato da blacklist - squadre successive dello stesso tipo saltate")
-                _log.registra_evento(ciclo, nome, "squadra_abbandonata", i+1, tentativo,
-                                     f"tipo={tipo} nodo_bloccato")
-                tipi_bloccati.add(tipo)
-                riuscita = False
-                break  # esce dal loop tentativi, continua con squadra successiva
+        chiave_nodo, nodo_bloccato, marcia_inviata = _tap_invia_squadra(
+            porta, tipo, n_truppe, nome, squadra_n, 1, ciclo,
+            logger, blacklist, blacklist_lock)
 
-            delay = min(DELAY_POSTMARCIA_BASE + ocr_fail_consecutivi * DELAY_POSTMARCIA_EXTRA,
-                        MAX_DELAY_POSTMARCIA)
-            if ocr_fail_consecutivi > 0:
-                log(f"Delay post-MARCIA: {delay:.1f}s (fail precedenti: {ocr_fail_consecutivi})")
-            time.sleep(delay)
+        # Se errore prima di MARCIA → rilascia blacklist
+        if not marcia_inviata and chiave_nodo:
+            log(f"Marcia non inviata - rilascio blacklist nodo {chiave_nodo}")
+            if blacklist is not None and blacklist_lock is not None:
+                with blacklist_lock:
+                    blacklist.pop(chiave_nodo, None)
 
-            s_post, screen_post = stato.back_rapidi_e_stato(porta, logger=logger, nome=nome)
+        if nodo_bloccato:
+            log(f"Tipo '{tipo}' bloccato da blacklist - squadre successive dello stesso tipo saltate")
+            _log.registra_evento(ciclo, nome, "squadra_abbandonata", squadra_n, 1,
+                                 f"tipo={tipo} nodo_bloccato")
+            tipi_bloccati.add(tipo)
+            fallimenti_cons += 1
+            continue
 
-            if s_post == "mappa":
-                time.sleep(1.5)
-            elif s_post == "home":
-                log("Post-BACK: in home - torno in mappa")
-                if not stato.vai_in_mappa(porta, nome, logger):
-                    log("Impossibile tornare in mappa - abbandono istanza")
-                    _log.registra_evento(ciclo, nome, "errore_mappa", i+1, tentativo, "post_back_home_no_mappa")
-                    stato.vai_in_home(porta, nome, logger)
-                    return inviate
-                _, screen_post = stato.rileva(porta)
-                time.sleep(1.5)
-            else:
-                log(f"Post-BACK: stato '{s_post}' inatteso - reset")
-                _reset_stato(porta, nome, screen_post, i+1, tentativo, ciclo, logger)
-                if not stato.vai_in_mappa(porta, nome, logger):
-                    log("Impossibile tornare in mappa - abbandono")
-                    stato.vai_in_home(porta, nome, logger)
-                    return inviate
-                ocr_fail_consecutivi += 1
-                continue
+        if not marcia_inviata:
+            log(f"Errore invio squadra {squadra_n} - conto come fallimento")
+            _log.registra_evento(ciclo, nome, "squadra_abbandonata", squadra_n, 1, "marcia_non_inviata")
+            fallimenti_cons += 1
+            continue
 
-            screen_post = adb.screenshot(porta)
-            debug.salva_screen(screen_post, nome, "post_marcia", i+1, tentativo)
-            debug.salva_crop_ocr(screen_post, nome, "post_marcia", i+1, tentativo)
+        # --- Post MARCIA: attendi e rileggi contatore reale ---
+        delay = min(DELAY_POSTMARCIA_BASE, MAX_DELAY_POSTMARCIA)
+        time.sleep(delay)
 
-            attive_dopo, _, _ = stato.conta_squadre(porta, n_letture=3)
+        s_post, screen_post = stato.back_rapidi_e_stato(porta, logger=logger, nome=nome)
 
-            if attive_dopo == -1:
-                ocr_fail_consecutivi += 1
-                log(f"OCR non disponibile dopo MARCIA (fail #{ocr_fail_consecutivi})")
-                debug.salva_screen(screen_post, nome, "ocr_fail", i+1, tentativo, f"fail{ocr_fail_consecutivi}")
-                debug.salva_crop_ocr(screen_post, nome, "ocr_fail", i+1, tentativo, f"fail{ocr_fail_consecutivi}")
-                _log.registra_evento(ciclo, nome, "ocr_fail", i+1, tentativo, f"fail_consecutivi={ocr_fail_consecutivi}")
-                _status.istanza_ocr_fail(nome)
-                if ocr_fail_consecutivi >= BACKOFF_SOGLIA_RESET:
-                    log(f"OCR-fail persistente ({ocr_fail_consecutivi}x) - reset completo")
-                    _reset_stato(porta, nome, screen_post, i+1, tentativo, ciclo, logger)
-                    if not stato.vai_in_mappa(porta, nome, logger):
-                        log("Impossibile tornare in mappa - abbandono")
-                        stato.vai_in_home(porta, nome, logger)
-                        return inviate
-                    ocr_fail_consecutivi = 0
+        if s_post == "mappa":
+            time.sleep(1.5)
+        elif s_post == "home":
+            log("Post-BACK: in home - torno in mappa")
+            if not stato.vai_in_mappa(porta, nome, logger):
+                log("Impossibile tornare in mappa - abbandono istanza")
+                _log.registra_evento(ciclo, nome, "errore_mappa", squadra_n, 1, "post_back_home_no_mappa")
+                stato.vai_in_home(porta, nome, logger)
+                return inviate
+            _, screen_post = stato.rileva(porta)
+            time.sleep(1.5)
+        else:
+            log(f"Post-BACK: stato '{s_post}' inatteso - reset")
+            _reset_stato(porta, nome, screen_post, squadra_n, 1, ciclo, logger)
+            # Rilascia blacklist — marcia non confermata
+            if chiave_nodo and blacklist is not None and blacklist_lock is not None:
+                with blacklist_lock:
+                    blacklist.pop(chiave_nodo, None)
+                log(f"Stato inatteso - rilascio blacklist nodo {chiave_nodo}")
+            if not stato.vai_in_mappa(porta, nome, logger):
+                log("Impossibile tornare in mappa - abbandono")
+                stato.vai_in_home(porta, nome, logger)
+                return inviate
+            fallimenti_cons += 1
+            continue
 
-            elif attive_dopo == attive_attese + 1:
-                log(f"Squadra confermata ({attive_attese} -> {attive_dopo})")
-                debug.salva_crop_ocr(screen_post, nome, "ocr_ok", i+1, tentativo)
-                _log.registra_evento(ciclo, nome, "squadra_ok", i+1, tentativo, f"attive={attive_dopo}")
+        # Lettura reale contatore dopo MARCIA
+        screen_post = adb.screenshot(porta)
+        debug.salva_screen(screen_post, nome, "post_marcia", squadra_n, 1)
+        debug.salva_crop_ocr(screen_post, nome, "post_marcia", squadra_n, 1)
+
+        attive_dopo, _, _ = stato.conta_squadre(porta, n_letture=3)
+
+        if attive_dopo == -1:
+            log(f"OCR non disponibile dopo MARCIA - conto come fallimento")
+            debug.salva_screen(screen_post, nome, "ocr_fail", squadra_n, 1)
+            _log.registra_evento(ciclo, nome, "ocr_fail", squadra_n, 1, "post_marcia")
+            _status.istanza_ocr_fail(nome)
+            fallimenti_cons += 1
+
+        elif attive_dopo > attive_correnti:
+            # Contatore aumentato → squadra confermata
+            log(f"Squadra confermata ({attive_correnti} -> {attive_dopo})")
+            debug.salva_crop_ocr(screen_post, nome, "ocr_ok", squadra_n, 1)
+            _log.registra_evento(ciclo, nome, "squadra_ok", squadra_n, 1, f"attive={attive_dopo}")
+            _status.istanza_squadra_ok(nome)
+            attive_correnti = attive_dopo
+            inviate += 1
+            fallimenti_cons = 0  # reset fallimenti consecutivi
+
+        else:
+            # Contatore invariato o diminuito → squadra respinta o dinamica di gioco
+            # Rileggi dopo 3s per distinguere ritardo UI da respinta reale
+            log(f"Contatore invariato dopo MARCIA: attive={attive_dopo} (era {attive_correnti}) - rileggo tra 3s")
+            debug.salva_screen(screen_post, nome, "cnt_errato", squadra_n, 1,
+                               f"era{attive_correnti}_letto{attive_dopo}")
+            _log.registra_evento(ciclo, nome, "cnt_errato", squadra_n, 1,
+                                 f"era={attive_correnti} letto={attive_dopo}")
+            _status.istanza_cnt_errato(nome)
+            time.sleep(3.0)
+            attive_dopo2, _, _ = stato.conta_squadre(porta, n_letture=3)
+
+            if attive_dopo2 != -1 and attive_dopo2 > attive_correnti:
+                # Era ritardo UI — squadra confermata
+                log(f"Squadra confermata dopo retry ({attive_correnti} -> {attive_dopo2})")
+                _log.registra_evento(ciclo, nome, "squadra_ok", squadra_n, 1,
+                                     f"attive={attive_dopo2} (retry)")
                 _status.istanza_squadra_ok(nome)
-                # Rimuovi nodo dalla blacklist — è occupato dalla nostra squadra, non serve più bloccare
-                # Nodo rimane in blacklist per TTL fisso (BLACKLIST_TTL secondi).
-                # NON viene rimosso alla conferma marcia: la squadra potrebbe
-                # non essere ancora arrivata e la prossima ricerca potrebbe
-                # selezionare lo stesso nodo prima dell'arrivo.
-                attive_attese += 1
+                attive_correnti = attive_dopo2
                 inviate += 1
-                ocr_fail_consecutivi = 0
-                riuscita = True
-                break
-
+                fallimenti_cons = 0
             else:
-                log(f"Contatore errato: atteso {attive_attese+1}, letto {attive_dopo} - rileggo tra 3s")
-                debug.salva_screen(screen_post, nome, "cnt_errato", i+1, tentativo, f"atteso{attive_attese+1}_letto{attive_dopo}")
-                debug.salva_crop_ocr(screen_post, nome, "cnt_errato", i+1, tentativo, f"atteso{attive_attese+1}_letto{attive_dopo}")
-                _log.registra_evento(ciclo, nome, "cnt_errato", i+1, tentativo, f"atteso={attive_attese+1} letto={attive_dopo}")
-                _status.istanza_cnt_errato(nome)
-                ocr_fail_consecutivi = 0
-
-                # Retry lettura — distingue ritardo UI / nodo occupato / stato sfasato
-                time.sleep(3.0)
-                attive_dopo2, _, _ = stato.conta_squadre(porta, n_letture=3)
-
-                if attive_dopo2 == attive_attese + 1:
-                    # Era solo ritardo UI — squadra confermata
-                    log(f"Squadra confermata dopo retry ({attive_attese} -> {attive_dopo2})")
-                    _log.registra_evento(ciclo, nome, "squadra_ok", i+1, tentativo, f"attive={attive_dopo2} (retry)")
-                    _status.istanza_squadra_ok(nome)
-                    # Nodo rimane in blacklist per TTL — non rimuovere manualmente
-                    attive_attese += 1
-                    inviate += 1
-                    riuscita = True
-                    break
-
-                elif attive_dopo2 == attive_attese:
-                    # Squadra respinta (nodo occupato) — riprova senza reset completo
-                    log(f"Squadra respinta (nodo occupato) - riprovo")
-                    _log.registra_evento(ciclo, nome, "nodo_occupato", i+1, tentativo, f"attive={attive_dopo2}")
-                    # Nodo rimane in blacklist per TTL — non rimuovere manualmente
-                    # rimane in mappa, il loop continua al tentativo successivo
-
-                else:
-                    # Contatore davvero sfasato — reset completo
-                    log(f"Contatore sfasato dopo retry: atteso {attive_attese+1}, letto {attive_dopo2} - reset")
-                    if blacklist is not None and blacklist_lock is not None and chiave_nodo:
-                        with blacklist_lock:
-                            blacklist.pop(chiave_nodo, None)
-                    _reset_stato(porta, nome, screen_post, i+1, tentativo, ciclo, logger)
-                    if not stato.vai_in_mappa(porta, nome, logger):
-                        log("Impossibile tornare in mappa - abbandono")
-                        stato.vai_in_home(porta, nome, logger)
-                        return inviate
-
-        if not riuscita and tipo not in tipi_bloccati:
-            log(f"Squadra {i+1} abbandonata dopo {config.MAX_TENTATIVI_RACCOLTA} tentativi")
-            _log.registra_evento(ciclo, nome, "squadra_abbandonata", i+1, config.MAX_TENTATIVI_RACCOLTA, f"tipo={tipo}")
+                # Squadra respinta o dinamica esterna — aggiorna comunque il contatore reale
+                attive_reali = attive_dopo2 if attive_dopo2 != -1 else attive_correnti
+                log(f"Squadra respinta o dinamica esterna - attive reali: {attive_reali}")
+                _log.registra_evento(ciclo, nome, "nodo_occupato", squadra_n, 1,
+                                     f"attive_reali={attive_reali}")
+                # Rilascia blacklist — la squadra non è partita
+                if chiave_nodo and blacklist is not None and blacklist_lock is not None:
+                    with blacklist_lock:
+                        blacklist.pop(chiave_nodo, None)
+                    log(f"Squadra respinta - rilascio blacklist nodo {chiave_nodo}")
+                attive_correnti = attive_reali
+                fallimenti_cons += 1
 
     stato.vai_in_home(porta, nome, logger)
     log(f"Raccolta completata - {inviate}/{da_inviare} squadre inviate")
