@@ -56,12 +56,11 @@ def _thumb(path: str, ciclo_dir: str) -> str:
             f'border-radius:3px;margin:1px" title="{os.path.basename(path)}"></a>')
 
 
-def genera_report(ciclo: int, risultati: dict, timing_riepilogo: dict = None) -> str:
+def genera_report(ciclo: int, risultati: dict) -> str:
     """
     Genera il report HTML per il ciclo specificato.
 
-    risultati:       { nome: n_squadre_inviate } (n < 0 = errore)
-    timing_riepilogo: { nome: {"ewma":..., "std":..., "attesa":...} } (opzionale)
+    risultati: { nome: n_squadre_inviate } (n < 0 = errore)
 
     Ritorna path del file generato.
     """

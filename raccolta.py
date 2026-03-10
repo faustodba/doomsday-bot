@@ -28,7 +28,7 @@ def _reset_stato(porta, nome, screen_path="", squadra=0, tentativo=0, ciclo=0, l
     stato.vai_in_home(porta, nome, logger, conferme=3)
     time.sleep(1.0)
 
-BLACKLIST_TTL      = 180   # secondi — TTL nodo in blacklist (3 min)
+BLACKLIST_TTL      = 120   # secondi — TTL nodo in blacklist (2 min fissi, non rimosso alla conferma marcia)
 MAX_RETRY_BLACKLIST = 5    # tentativi massimi se nodo sempre in blacklist
 
 def _cerca_nodo(porta, tipo):
@@ -296,10 +296,10 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
                 _log.registra_evento(ciclo, nome, "squadra_ok", i+1, tentativo, f"attive={attive_dopo}")
                 _status.istanza_squadra_ok(nome)
                 # Rimuovi nodo dalla blacklist — è occupato dalla nostra squadra, non serve più bloccare
-                if blacklist is not None and blacklist_lock is not None and chiave_nodo:
-                    with blacklist_lock:
-                        blacklist.pop(chiave_nodo, None)
-                        log(f"Nodo {chiave_nodo} rimosso da blacklist (squadra in marcia)")
+                # Nodo rimane in blacklist per TTL fisso (BLACKLIST_TTL secondi).
+                # NON viene rimosso alla conferma marcia: la squadra potrebbe
+                # non essere ancora arrivata e la prossima ricerca potrebbe
+                # selezionare lo stesso nodo prima dell'arrivo.
                 attive_attese += 1
                 inviate += 1
                 ocr_fail_consecutivi = 0
@@ -323,9 +323,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
                     log(f"Squadra confermata dopo retry ({attive_attese} -> {attive_dopo2})")
                     _log.registra_evento(ciclo, nome, "squadra_ok", i+1, tentativo, f"attive={attive_dopo2} (retry)")
                     _status.istanza_squadra_ok(nome)
-                    if blacklist is not None and blacklist_lock is not None and chiave_nodo:
-                        with blacklist_lock:
-                            blacklist.pop(chiave_nodo, None)
+                    # Nodo rimane in blacklist per TTL — non rimuovere manualmente
                     attive_attese += 1
                     inviate += 1
                     riuscita = True

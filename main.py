@@ -186,7 +186,7 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
     totale_errori  = sum(1 for v in risultati.values() if v == -1)
     totale_timeout = sum(1 for v in risultati.values() if v == -2)
     totale_watchdog = sum(1 for v in risultati.values() if v == -3)
-    return totale_inviate, totale_errori, totale_timeout, totale_watchdog
+    return totale_inviate, totale_errori, totale_timeout, totale_watchdog, risultati
 
 # ------------------------------------------------------------------------------
 # Loop principale
@@ -219,8 +219,8 @@ def main():
         status.init_ciclo(ciclo, [i[0] for i in ISTANZE_ATTIVE])
 
         t_inizio = time.time()
-        totale_inviate, totale_errori, totale_timeout, totale_watchdog = esegui_ciclo_pool(ISTANZE_ATTIVE, ciclo)
-        report.genera_report(ciclo, debug.ciclo_dir(), log.get_eventi(ciclo))
+        totale_inviate, totale_errori, totale_timeout, totale_watchdog, risultati = esegui_ciclo_pool(ISTANZE_ATTIVE, ciclo)
+        report.genera_report(ciclo, risultati)
         durata_s = int(time.time() - t_inizio)
 
         log.logger("MAIN", f"Ciclo {ciclo} completato - "
