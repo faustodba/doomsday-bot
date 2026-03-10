@@ -1,321 +1,440 @@
 # ==============================================================================
-#  DOOMSDAY BOT V5 - rifornimento.py
+#  DOOMSDAY BOT V5 - rifornimento.py  V5.3
 #  Invio risorse al rifugio alleato (Risorse di Approvvigionamento)
 #
 #  Flusso:
-#    1. Legge contatore slot liberi (OCR in home)
-#    2. Controlla risorse disponibili (pomodoro/legno > soglia)
-#    3. Naviga: Alleanza → Membri → R3 → scroll + OCR nome → tap membro
-#    4. Tap "Risorse di approvvigionamento"
-#    5. Per ogni risorsa disponibile e slot libero:
-#       - Tap campo quantità → digita 999999999 → OK → VAI
-#    6. Torna in home
+#    1. Legge slot liberi raccoglitori (OCR contatore in home)
+#    2. Controlla risorse mittente > soglia (10M default, considera tassa 24%)
+#    3. Naviga: Alleanza → Membri → scorri R1/R2/R3/R4 → trova avatar
+#    4. Tap membro → trova pulsante "Risorse di approvvigionamento" via template matching
+#    5. Nella maschera: leggi residuo giornaliero e tempo percorrenza
+#    6. Compila campi quantità → Tap VAI → torna in home
+#    7. Rileggi slot liberi → ripeti finché slot==0 o risorse esaurite
 #
 #  Chiamato da raccolta.py PRIMA della raccolta risorse, quando si è in home.
 # ==============================================================================
 
 import time
+import os
+import cv2
+import numpy as np
 import adb
 import ocr
 import stato
 import config
+import log as _log
 
 # ------------------------------------------------------------------------------
 # Coordinate navigazione (risoluzione 960x540)
 # ------------------------------------------------------------------------------
-COORD_ALLEANZA_BTN   = (760, 505)   # pulsante Alleanza in home (già in alleanza.py)
-COORD_MEMBRI         = (46, 188)    # tab Membri nel menu Alleanza
-COORD_R3             = (480, 245)   # tab R3 nella lista membri
-COORD_SWIPE_START    = (480, 420)   # swipe verso l'alto per scorrere lista
-COORD_SWIPE_END      = (480, 280)   # fine swipe
+COORD_ALLEANZA_BTN  = (760, 505)   # pulsante Alleanza in home
 
-# Popup membro (compare dopo tap sul membro)
-COORD_RISORSE_APPROV = (442, 320)   # pulsante "Risorse di approvvigionamento"
+COORD_MEMBRI        = (46, 188)    # tab Membri nel menu Alleanza
 
-# Maschera invio risorse
-COORD_CAMPO_POMODORO = (730, 222)   # campo quantità pomodoro
-COORD_CAMPO_LEGNO    = (730, 272)   # campo quantità legno
-COORD_VAI            = (480, 430)   # pulsante VAI
+# Tab R1/R2/R3/R4 nella lista membri
+COORD_TAB_R = {
+    "R1": (175, 245),
+    "R2": (305, 245),
+    "R3": (435, 245),
+    "R4": (565, 245),
+}
 
-# OCR zona nome membro nella lista (colonna sinistra e destra)
-# La lista ha 2 colonne, ogni riga è alta ~70px
-# Prima riga visibile parte da y~280, nomi a x~220 (sx) e x~700 (dx)
-OCR_LISTA_RIGHE = [
-    # (x1, y1, x2, y2, colonna)  — coordinate crop per OCR nome
-    (140, 270, 440, 310, "sx"),
-    (530, 270, 830, 310, "dx"),
-    (140, 340, 440, 380, "sx"),
-    (530, 340, 830, 380, "dx"),
-    (140, 410, 440, 450, "sx"),
-    (530, 410, 830, 450, "dx"),
-]
+# Swipe per scorrere lista membri (verso l'alto)
+COORD_SWIPE_SU_START = (480, 420)
+COORD_SWIPE_SU_END   = (480, 250)
 
-# Coordinate tap centro cella (per selezionare il membro trovato)
-OCR_LISTA_TAP = [
-    (290, 290, "sx"),
-    (680, 290, "dx"),
-    (290, 360, "sx"),
-    (680, 360, "dx"),
-    (290, 430, "sx"),
-    (680, 430, "dx"),
-]
+# Maschera invio risorse — 4 campi quantità (coordinate fisse 960x540)
+COORD_CAMPO = {
+    "pomodoro": (620, 222),
+    "legno":    (620, 272),
+    "acciaio":  (620, 322),
+    "petrolio": (620, 372),
+}
 
-# Quantità da digitare (il gioco la converte al massimo consentito)
-QUANTITA_MAX = "999999999"
+COORD_VAI = (480, 448)   # pulsante VAI
 
-# Soglia minima risorse per inviare (in unità assolute)
-SOGLIA_MIN_M = 10.0   # 10M
+# Zone OCR nella maschera invio risorse
+OCR_RESIDUO_OGGI = (140, 225, 360, 255)   # "Provviste rimanenti di oggi: 20,000,000"
+OCR_TEMPO        = (380, 410, 580, 440)   # "00:00:54"
 
-# Max swipe per cercare il membro nella lista
-MAX_SWIPE = 6
+# Area di ricerca avatar nella lista membri (zona lista, escluso header e sidebar)
+AVATAR_ZONA      = (130, 155, 540, 490)
+
+# Soglie template matching
+AVATAR_SOGLIA        = 0.75
+BTN_RISORSE_SOGLIA   = 0.75
+
+# Max swipe per cercare avatar in ogni tab
+MAX_SWIPE = 8
+
+# Tassa invio default (24%) — preleva qta * (1 + tassa) dal mittente
+TASSA_DEFAULT = 0.24
+
+# Quantità default per singolo invio (unità assolute)
+QTA_DEFAULT = {
+    "pomodoro": 500_000,
+    "legno":    500_000,
+    "acciaio":  0,
+    "petrolio": 0,
+}
+
+# Soglia minima risorse mittente per inviare (milioni)
+SOGLIA_MIN_M = 10.0
 
 # ------------------------------------------------------------------------------
-# Leggi slot liberi raccoglitori (OCR contatore X/Y in home)
+# Leggi slot liberi raccoglitori da home
 # ------------------------------------------------------------------------------
 def _slot_liberi(porta: str) -> int:
-    """Legge il contatore raccoglitori e ritorna gli slot liberi."""
-    screen = adb.screenshot(porta)
-    if not screen:
-        return 4  # fallback: assume tutti liberi
-    crop = adb.crop_zona(screen, config.OCR_ZONA)
-    if not crop:
-        return 4
-    attive, totale = ocr.leggi_contatore(crop)
+    """Legge contatore raccoglitori in home. Ritorna slot liberi (0-4)."""
+    attive, totale, libere = stato.conta_squadre(porta, n_letture=3)
     if attive == -1 or totale == -1:
-        return 4  # OCR fallito: assume tutti liberi
-    return max(0, totale - attive)
+        return 4  # fallback ottimistico
+    return libere
 
 # ------------------------------------------------------------------------------
-# Cerca l'avatar del membro nella lista via template matching OpenCV
-# Ritorna (x, y) del tap sul membro, o None se non trovato
+# Template matching generico
 # ------------------------------------------------------------------------------
-def _cerca_avatar_visibile(porta: str, template_path: str) -> tuple:
+def _trova_template(screen_path: str, template_path: str, zona=None, soglia=0.75):
     """
-    Scatta screenshot e cerca l'avatar via template matching OpenCV.
-    Ritorna le coordinate (x,y) del tap sul membro, o None se non trovato.
+    Cerca template in screen (opzionalmente in zona=(x1,y1,x2,y2)).
+    Ritorna (cx, cy) coordinate assolute, oppure None.
     """
-    import cv2
-    import numpy as np
-
-    screen = adb.screenshot(porta)
-    if not screen:
+    if not screen_path or not os.path.exists(screen_path):
+        return None
+    if not template_path or not os.path.exists(template_path):
         return None
 
-    img = cv2.imread(screen)
+    img  = cv2.imread(screen_path)
     tmpl = cv2.imread(template_path)
     if img is None or tmpl is None:
         return None
 
-    # Cerca nella zona lista (y: 160-480, x: 130-850)
-    zona = img[160:480, 130:850]
-    result = cv2.matchTemplate(zona, tmpl, cv2.TM_CCOEFF_NORMED)
+    offset_x, offset_y = 0, 0
+    if zona:
+        x1, y1, x2, y2 = zona
+        img = img[y1:y2, x1:x2]
+        offset_x, offset_y = x1, y1
+
+    result = cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-
-    if max_val < 0.75:
+    if max_val < soglia:
         return None
 
-    # Centro avatar nella zona + offset crop
     th, tw = tmpl.shape[:2]
-    cx = max_loc[0] + tw // 2 + 130
-    cy = max_loc[1] + th // 2 + 160
-
-    # Tap al centro della cella (colonna sx o dx)
-    tap_x = 290 if cx < 490 else 680
-    tap_y = cy
-    return (tap_x, tap_y)
-
+    cx = max_loc[0] + tw // 2 + offset_x
+    cy = max_loc[1] + th // 2 + offset_y
+    return (cx, cy)
 
 # ------------------------------------------------------------------------------
-# Cerca il pulsante "Risorse di approvvigionamento" nel popup via OCR
-# Il popup compare in posizione variabile a seconda dello scroll della lista
+# Cerca avatar destinatario nella lista visibile
 # ------------------------------------------------------------------------------
-def _trova_pulsante_risorse(porta: str) -> tuple:
-    """Cerca il pulsante Risorse di approvvigionamento nel popup via OCR."""
+def _cerca_avatar_visibile(porta: str, template_path: str, logger=None, nome: str = ""):
+    def log(msg):
+        if logger: logger(nome, f"[RIF] {msg}")
+
     screen = adb.screenshot(porta)
     if not screen:
         return None
 
-    # Scansiona area centrale popup (y: 150-450) a step di 40px
-    step = 40
-    for y1 in range(150, 430, step):
-        y2 = y1 + step
-        crop = adb.crop_zona(screen, (130, y1, 530, y2))
-        if not crop:
-            continue
-        testo = ocr.leggi_testo(crop).lower()
-        if "risorse" in testo or "approvv" in testo:
-            return (330, y1 + step // 2)
+    coord = _trova_template(screen, template_path, zona=AVATAR_ZONA, soglia=AVATAR_SOGLIA)
+    if not coord:
+        return None
+
+    cx, cy = coord
+    tap_x = 290 if cx < 490 else 680
+    log(f"Avatar trovato a ({cx},{cy}) → tap ({tap_x},{cy})")
+    return (tap_x, cy)
+
+# ------------------------------------------------------------------------------
+# Cerca pulsante "Risorse di approvvigionamento" via template matching
+# Posizione variabile — NON usare coordinate fisse
+# ------------------------------------------------------------------------------
+def _trova_pulsante_risorse(porta: str, logger=None, nome: str = ""):
+    def log(msg):
+        if logger: logger(nome, f"[RIF] {msg}")
+
+    template_path = getattr(config, "RIFORNIMENTO_BTN_TEMPLATE",
+                            "templates/btn_risorse_approv.png")
+
+    screen = adb.screenshot(porta)
+    if not screen:
+        return None
+
+    coord = _trova_template(screen, template_path, soglia=BTN_RISORSE_SOGLIA)
+    if coord:
+        log(f"Pulsante Risorse trovato a {coord}")
+        return coord
+
+    log("Pulsante Risorse non trovato via template matching")
     return None
 
 # ------------------------------------------------------------------------------
-# Naviga alla maschera Risorse di Approvvigionamento
-# Ritorna True se la maschera è aperta, False se fallisce
+# Leggi residuo giornaliero dalla maschera invio
 # ------------------------------------------------------------------------------
-def _naviga_a_maschera(porta: str, nome_rifugio: str, logger=None, nome: str = "") -> bool:
-    """
-    Navigazione completa: Alleanza → Membri → R3 → scroll → tap membro → tap Risorse.
-    """
+def _leggi_residuo(porta: str) -> float:
+    """Ritorna residuo in milioni, -1 se OCR fallisce, 0 se esaurito."""
+    screen = adb.screenshot(porta)
+    if not screen:
+        return -1
+    valore = ocr.leggi_numero_zona(screen, OCR_RESIDUO_OGGI)
+    if valore is None or valore < 0:
+        return -1
+    return valore / 1_000_000
+
+# ------------------------------------------------------------------------------
+# Leggi tempo di percorrenza dalla maschera invio
+# ------------------------------------------------------------------------------
+def _leggi_tempo_percorrenza(porta: str) -> int:
+    """Ritorna secondi totali del tempo percorrenza, 0 se OCR fallisce."""
+    screen = adb.screenshot(porta)
+    if not screen:
+        return 0
+    testo = ocr.leggi_testo_zona(screen, OCR_TEMPO).strip()
+    parti = testo.replace(".", ":").split(":")
+    try:
+        if len(parti) == 3:
+            return int(parti[0]) * 3600 + int(parti[1]) * 60 + int(parti[2])
+        elif len(parti) == 2:
+            return int(parti[0]) * 60 + int(parti[1])
+    except (ValueError, IndexError):
+        pass
+    return 0
+
+# ------------------------------------------------------------------------------
+# Naviga alla maschera "Risorse di Approvvigionamento"
+# Scorre R1→R2→R3→R4 con swipe fino a trovare l'avatar
+# ------------------------------------------------------------------------------
+def _naviga_a_maschera(porta: str, logger=None, nome: str = "") -> bool:
     def log(msg):
         if logger: logger(nome, f"[RIF] {msg}")
 
-    # 1. Apri menu Alleanza
+    template_avatar = getattr(config, "RIFORNIMENTO_AVATAR", "")
+    if not template_avatar or not os.path.exists(template_avatar):
+        log(f"ERRORE: template avatar non trovato: {template_avatar}")
+        return False
+
+    # 1. Apri Alleanza
     log("Tap Alleanza")
-    adb.tap(porta, COORD_ALLEANZA_BTN, delay_ms=2000)
+    adb.tap(porta, COORD_ALLEANZA_BTN, delay_ms=1500)
 
     # 2. Tap Membri
     log("Tap Membri")
-    adb.tap(porta, COORD_MEMBRI, delay_ms=2000)
+    adb.tap(porta, COORD_MEMBRI, delay_ms=1500)
 
-    # 3. Assicurati che tutti i tab siano chiusi — tap R3 per aprirlo
-    #    Se R1 o altri erano aperti, chiudiamoli con BACK e riaprendo
-    log("Tap R3")
-    adb.tap(porta, COORD_R3, delay_ms=2000)
-
-    # 4. Cerca avatar nella lista con scroll
-    template_path = getattr(config, "RIFORNIMENTO_AVATAR", "")
-    log(f"Ricerca avatar '{nome_rifugio}' nella lista R3...")
+    # 3. Scorri R1→R2→R3→R4 cercando avatar
     coord_tap = None
+    for tab_nome, tab_coord in COORD_TAB_R.items():
+        log(f"Cerco avatar nel tab {tab_nome}")
+        adb.tap(porta, tab_coord, delay_ms=1500)
 
-    for swipe_n in range(MAX_SWIPE + 1):
-        coord_tap = _cerca_avatar_visibile(porta, template_path)
+        for swipe_n in range(MAX_SWIPE + 1):
+            coord_tap = _cerca_avatar_visibile(porta, template_avatar, logger, nome)
+            if coord_tap:
+                log(f"Avatar trovato in {tab_nome} dopo {swipe_n} swipe")
+                break
+            if swipe_n < MAX_SWIPE:
+                log(f"{tab_nome}: swipe {swipe_n + 1}/{MAX_SWIPE}")
+                adb.scroll(porta,
+                           COORD_SWIPE_SU_START[0], COORD_SWIPE_SU_START[1],
+                           COORD_SWIPE_SU_END[1], durata_ms=600)
+                time.sleep(1.5)
+
         if coord_tap:
-            log(f"Avatar trovato dopo {swipe_n} swipe")
             break
-        if swipe_n < MAX_SWIPE:
-            log(f"Non trovato - swipe {swipe_n + 1}/{MAX_SWIPE}")
-            adb.scroll(porta, COORD_SWIPE_START[0], COORD_SWIPE_START[1], COORD_SWIPE_END[1], durata_ms=600)
-            time.sleep(5.0)
 
     if not coord_tap:
-        log(f"ERRORE: avatar '{nome_rifugio}' non trovato dopo {MAX_SWIPE} swipe")
+        log("ERRORE: avatar non trovato in R1-R4")
         return False
 
-    # 5. Tap sul membro → compare popup
+    # 4. Tap membro → popup 4 pulsanti (Chat | Info | Rinforzo | Risorse)
     log(f"Tap membro a {coord_tap}")
     adb.tap(porta, coord_tap, delay_ms=1500)
 
-    # 6. Cerca e tap "Risorse di approvvigionamento" via OCR
-    log("Ricerca pulsante Risorse di approvvigionamento...")
-    coord_risorse = None
-    for _ in range(3):
-        coord_risorse = _trova_pulsante_risorse(porta)
-        if coord_risorse:
+    # 5. Trova pulsante "Risorse di approvvigionamento" via template matching
+    btn_coord = None
+    for tentativo in range(3):
+        btn_coord = _trova_pulsante_risorse(porta, logger, nome)
+        if btn_coord:
             break
-        time.sleep(0.5)
+        time.sleep(0.8)
 
-    if not coord_risorse:
-        log("ERRORE: pulsante Risorse non trovato - uso coordinate fisse")
-        coord_risorse = COORD_RISORSE_APPROV
+    if not btn_coord:
+        log("ERRORE: pulsante Risorse non trovato - chiudo popup con BACK")
+        adb.keyevent(porta, "KEYCODE_BACK")
+        return False
 
-    log(f"Tap Risorse di approvvigionamento a {coord_risorse}")
-    adb.tap(porta, coord_risorse, delay_ms=2000)
-
+    # 6. Tap "Risorse di approvvigionamento"
+    log(f"Tap Risorse di approvvigionamento a {btn_coord}")
+    adb.tap(porta, btn_coord, delay_ms=2000)
     return True
 
 # ------------------------------------------------------------------------------
-# Invia una risorsa (pomodoro o legno)
-# Ritorna True se VAI premuto con successo
+# Compila campi e preme VAI nella maschera invio
 # ------------------------------------------------------------------------------
-def _invia_risorsa(porta: str, tipo: str, logger=None, nome: str = "") -> bool:
+def _compila_e_invia(porta: str, quantita: dict, logger=None, nome: str = ""):
     """
-    Compila il campo della risorsa e preme VAI.
-    tipo: 'pomodoro' | 'legno'
+    Ritorna (ok: bool, tempo_percorrenza: int).
+    ok=False se residuo giornaliero esaurito o errore.
     """
     def log(msg):
         if logger: logger(nome, f"[RIF] {msg}")
 
-    coord_campo = COORD_CAMPO_POMODORO if tipo == "pomodoro" else COORD_CAMPO_LEGNO
+    # Leggi residuo giornaliero — se 0 non inviare
+    residuo_m = _leggi_residuo(porta)
+    if residuo_m >= 0:
+        log(f"Residuo giornaliero: {residuo_m:.1f}M")
+    else:
+        log("Residuo giornaliero: OCR fallito - procedo")
 
-    # Tap sul campo quantità
-    log(f"Tap campo {tipo}")
-    adb.tap(porta, coord_campo, delay_ms=800)
+    if residuo_m == 0:
+        log("Residuo giornaliero esaurito - stop")
+        return False, 0
 
-    # Digita quantità massima
-    log(f"Digita {QUANTITA_MAX}")
-    adb.input_text(porta, QUANTITA_MAX)
-    time.sleep(0.5)
+    # Leggi tempo percorrenza
+    tempo = _leggi_tempo_percorrenza(porta)
+    log(f"Tempo percorrenza: {tempo}s")
 
-    # Conferma tastiera (OK)
-    adb.tap(porta, (config.TAP_OK_TASTIERA[0], config.TAP_OK_TASTIERA[1]), delay_ms=800)
+    # Compila campi quantità
+    for risorsa, qta in quantita.items():
+        if qta <= 0:
+            continue
+        coord = COORD_CAMPO.get(risorsa)
+        if not coord:
+            continue
+        log(f"Compila {risorsa}: {qta:,}")
+        adb.tap(porta, coord, delay_ms=600)
+        adb.keyevent(porta, "KEYCODE_CTRL_A")
+        time.sleep(0.2)
+        adb.keyevent(porta, "KEYCODE_DEL")
+        time.sleep(0.2)
+        adb.input_text(porta, str(qta))
+        time.sleep(0.4)
+        adb.tap(porta, config.TAP_OK_TASTIERA, delay_ms=500)
 
     # Tap VAI
     log("Tap VAI")
-    adb.tap(porta, COORD_VAI, delay_ms=3000)
-
-    return True
+    adb.tap(porta, COORD_VAI, delay_ms=2000)
+    return True, tempo
 
 # ------------------------------------------------------------------------------
 # Funzione principale
 # ------------------------------------------------------------------------------
-def esegui_rifornimento(porta: str, nome: str, pomodoro_m: float, legno_m: float,
-                         logger=None) -> int:
+def esegui_rifornimento(porta: str, nome: str,
+                        pomodoro_m: float = -1, legno_m: float = -1,
+                        acciaio_m: float = -1, petrolio_m: float = -1,
+                        logger=None, ciclo: int = 0) -> int:
     """
-    Esegue il rifornimento risorse al rifugio alleato configurato.
-
-    porta       : porta ADB istanza
-    nome        : nome istanza (per log)
-    pomodoro_m  : pomodoro disponibile in milioni (da OCR raccolta precedente, -1 se non noto)
-    legno_m     : legno disponibile in milioni
-    logger      : funzione log(nome, msg)
-
-    Ritorna il numero di spedizioni effettuate (0 se nessuna).
+    Esegue rifornimento risorse al rifugio alleato configurato.
+    Ritorna numero di spedizioni effettuate.
     """
     def log(msg):
         if logger: logger(nome, f"[RIF] {msg}")
 
     nome_rifugio = getattr(config, "RIFORNIMENTO_DESTINATARIO", "")
     soglia       = getattr(config, "RIFORNIMENTO_SOGLIA_M", SOGLIA_MIN_M)
+    tassa        = getattr(config, "RIFORNIMENTO_TASSA", TASSA_DEFAULT)
 
     if not nome_rifugio:
         log("RIFORNIMENTO_DESTINATARIO non configurato - skip")
         return 0
 
-    # 1. Controlla slot liberi
-    slot = _slot_liberi(porta)
-    log(f"Slot raccoglitori liberi: {slot}")
-    if slot == 0:
-        log("Nessun slot libero - skip rifornimento")
-        return 0
+    # Quantità per spedizione da config (con fallback a default)
+    quantita = {
+        "pomodoro": getattr(config, "RIFORNIMENTO_QTA_POMODORO", QTA_DEFAULT["pomodoro"]),
+        "legno":    getattr(config, "RIFORNIMENTO_QTA_LEGNO",    QTA_DEFAULT["legno"]),
+        "acciaio":  getattr(config, "RIFORNIMENTO_QTA_ACCIAIO",  QTA_DEFAULT["acciaio"]),
+        "petrolio": getattr(config, "RIFORNIMENTO_QTA_PETROLIO", QTA_DEFAULT["petrolio"]),
+    }
 
-    # 2. Determina risorse da inviare
-    risorse_da_inviare = []
-    if pomodoro_m < 0 or pomodoro_m > soglia:
-        risorse_da_inviare.append("pomodoro")
-    if legno_m < 0 or legno_m > soglia:
-        risorse_da_inviare.append("legno")
+    # Risorse mittente correnti (aggiornate dopo ogni spedizione)
+    risorse_m = {
+        "pomodoro": pomodoro_m,
+        "legno":    legno_m,
+        "acciaio":  acciaio_m,
+        "petrolio": petrolio_m,
+    }
 
+    def _ha_risorse(risorsa: str) -> bool:
+        """True se mittente ha abbastanza risorse (considera tassa)."""
+        rm = risorse_m.get(risorsa, -1)
+        if rm < 0:
+            return True  # valore non noto → non bloccare
+        qta = quantita.get(risorsa, 0)
+        necessario_m = (qta * (1 + tassa)) / 1_000_000
+        return rm >= max(soglia, necessario_m)
+
+    def _risorse_attive() -> dict:
+        return {r: q for r, q in quantita.items()
+                if q > 0 and _ha_risorse(r)}
+
+    risorse_da_inviare = _risorse_attive()
     if not risorse_da_inviare:
-        log(f"Risorse sotto soglia ({soglia}M) - skip rifornimento")
+        log(f"Nessuna risorsa disponibile sopra soglia ({soglia}M) - skip")
         return 0
 
-    # Limita alle risorse disponibili per gli slot liberi
-    risorse_da_inviare = risorse_da_inviare[:slot]
-    log(f"Risorse da inviare: {risorse_da_inviare} (slot: {slot})")
+    log(f"Risorse configurate: {list(risorse_da_inviare.keys())} | soglia: {soglia}M | tassa: {tassa*100:.0f}%")
 
-    spedizioni = 0
+    spedizioni   = 0
+    tempo_attesa = 0
 
-    for i, risorsa in enumerate(risorse_da_inviare):
-        log(f"Spedizione {i+1}/{len(risorse_da_inviare)}: {risorsa}")
+    while True:
+        # Rileggi slot liberi dalla home
+        slot = _slot_liberi(porta)
+        log(f"Slot liberi: {slot}")
 
-        # Naviga alla maschera (ogni volta — il gioco chiude il popup dopo VAI)
-        if not _naviga_a_maschera(porta, nome_rifugio, logger, nome):
+        if slot == 0:
+            if tempo_attesa > 0:
+                log(f"Slot occupati - attendo {tempo_attesa + 5}s (tempo percorrenza + margine)")
+                time.sleep(tempo_attesa + 5)
+                slot = _slot_liberi(porta)
+                log(f"Slot dopo attesa: {slot}")
+            if slot == 0:
+                log("Nessun slot libero - stop rifornimento")
+                break
+
+        # Ricalcola risorse attive ad ogni iterazione
+        risorse_da_inviare = _risorse_attive()
+        if not risorse_da_inviare:
+            log("Risorse mittente sotto soglia - stop rifornimento")
+            break
+
+        # Naviga alla maschera (deve rifare la navigazione ad ogni spedizione
+        # perché il gioco esce dalla maschera dopo ogni VAI)
+        if not _naviga_a_maschera(porta, logger, nome):
             log("Navigazione fallita - interruzione rifornimento")
-            # Torna in home con BACK
-            for _ in range(4):
+            for _ in range(5):
                 adb.keyevent(porta, "KEYCODE_BACK")
                 time.sleep(0.5)
-            return spedizioni
+            stato.vai_in_home(porta, nome, logger)
+            break
 
-        # Invia risorsa
-        if _invia_risorsa(porta, risorsa, logger, nome):
-            spedizioni += 1
-            log(f"Spedizione {risorsa} completata")
-        else:
-            log(f"Spedizione {risorsa} fallita")
+        # Compila e invia
+        ok, tempo = _compila_e_invia(porta, risorse_da_inviare, logger, nome)
+        if not ok:
+            log("Invio fallito o residuo esaurito - stop rifornimento")
+            adb.keyevent(porta, "KEYCODE_BACK")
+            time.sleep(0.5)
+            stato.vai_in_home(porta, nome, logger)
+            break
 
-        # Dopo VAI siamo tornati in home — pausa stabilizzazione
+        if tempo > 0:
+            tempo_attesa = tempo
+
+        spedizioni += 1
+        log(f"Spedizione {spedizioni} completata (tempo: {tempo}s)")
+        _log.registra_evento(ciclo, nome, "rifornimento_ok", spedizioni, 1,
+                             f"risorse={list(risorse_da_inviare.keys())}")
+
+        # Aggiorna stima risorse mittente (sottrai prelevato con tassa)
+        for risorsa in risorse_da_inviare:
+            qta = risorse_da_inviare[risorsa]
+            prelevato_m = (qta * (1 + tassa)) / 1_000_000
+            if risorse_m.get(risorsa, -1) >= 0:
+                risorse_m[risorsa] -= prelevato_m
+
+        # Pausa stabilizzazione prima di rileggere lo stato
         time.sleep(3.0)
 
-    log(f"Rifornimento completato: {spedizioni} spedizioni")
+    log(f"Rifornimento completato: {spedizioni} spedizioni totali")
     return spedizioni

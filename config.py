@@ -104,9 +104,15 @@ MSG_LEGGI_X         = 95
 MSG_LEGGI_Y         = 510
 
 # --- Rifornimento alleanza ---
-RIFORNIMENTO_DESTINATARIO = "FauMorfeus"
-RIFORNIMENTO_SOGLIA_M     = 10.0
-RIFORNIMENTO_AVATAR = r"C:\Bot-raccolta\V5\faumorfeus_avatar.png"
+RIFORNIMENTO_DESTINATARIO  = "FauMorfeus"
+RIFORNIMENTO_AVATAR        = "templates/avatar_faumorfeus.png"
+RIFORNIMENTO_BTN_TEMPLATE  = "templates/btn_risorse_approv.png"
+RIFORNIMENTO_SOGLIA_M      = 10.0
+RIFORNIMENTO_TASSA         = 0.24
+RIFORNIMENTO_QTA_POMODORO  = 500_000
+RIFORNIMENTO_QTA_LEGNO     = 500_000
+RIFORNIMENTO_QTA_ACCIAIO   = 0
+RIFORNIMENTO_QTA_PETROLIO  = 0
 
 # --- MuMuPlayer ---
 MUMU_MANAGER = r"C:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe"
