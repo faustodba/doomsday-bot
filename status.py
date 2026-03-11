@@ -42,6 +42,7 @@ def _istanza_default(nome: str) -> dict:
         "legno":           -1,
         "acciaio":         -1,
         "petrolio":        -1,
+ "diamanti": -1,
         "ocr_fail":        0,
         "cnt_errati":      0,
         "ts_inizio":       "",
@@ -111,7 +112,7 @@ def istanza_raccolta(nome: str):
 
 
 def istanza_risorse(nome: str, pomodoro: float, legno: float,
-                    acciaio: float = -1, petrolio: float = -1):
+                   acciaio: float = -1, petrolio: float = -1, diamanti: float = -1):
     """Salva valori deposito letti dall'OCR."""
     with _lock:
         ist = _stato["istanze"].get(nome, _istanza_default(nome))
@@ -122,6 +123,14 @@ def istanza_risorse(nome: str, pomodoro: float, legno: float,
         _stato["istanze"][nome] = ist
         _scrivi()
 
+
+def istanza_diamanti(nome: str, diamanti: int):
+    """Salva il valore diamanti (valuta premium) letto dall'OCR."""
+    with _lock:
+        ist = _stato["istanze"].get(nome, _istanza_default(nome))
+        ist["diamanti"] = int(diamanti) if diamanti is not None and diamanti >= 0 else -1
+        _stato["istanze"][nome] = ist
+        _scrivi()
 
 def istanza_target(nome: str, target: int):
     with _lock:
