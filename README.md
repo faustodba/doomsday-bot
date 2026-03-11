@@ -142,6 +142,7 @@ lettura contatore reale
 - Se stesso nodo ancora → attesa 120s → riprova
 - Se ancora stesso nodo → skip tipo corrente
 - Blacklist rilasciata se errore prima del tap MARCIA
+- Se il contatore squadre (OCR X/Y) non è visibile: fallback **0/max_squadre** (max_squadre da config per istanza, tipicamente 4 o 5)
 
 ---
 

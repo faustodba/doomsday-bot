@@ -1,5 +1,10 @@
 # ==============================================================================
-#  DOOMSDAY BOT V5 - raccolta.py  V5.10
+#  DOOMSDAY BOT V5 - raccolta.py V5.11
+#
+# V5.11: Fix fallback contatore squadre
+# - Quando OCR del contatore X/Y non è disponibile, il totale slot non è più hardcoded a 4
+# - Usiamo max_squadre (da config per istanza) come totale slot previsto (tipicamente 4 o 5)
+#
 # ==============================================================================
 
 import time
@@ -245,8 +250,15 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         attive_inizio, totale, libere = stato.conta_squadre(porta, n_letture=3)
 
     if attive_inizio == -1:
-        log("Contatore non visibile dopo retry - assumo 0/4 attive, 4 libere")
-        attive_inizio, totale, libere = 0, 4, 4
+        # Fallback: contatore squadre non visibile → uso max_squadre come totale slot previsto
+
+        # Nota: max_squadre arriva da config per istanza (tipicamente 4 o 5) e per tua scelta coincide con gli slot da riempire
+
+        fallback_totale = max_squadre if max_squadre and max_squadre > 0 else 4
+
+        log(f"Contatore non visibile dopo retry - assumo 0/{fallback_totale} attive, {fallback_totale} libere")
+
+        attive_inizio, totale, libere = 0, fallback_totale, fallback_totale
     else:
         log(f"Squadre: {attive_inizio}/{totale} attive, {libere} libere")
 
