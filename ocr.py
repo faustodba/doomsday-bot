@@ -83,7 +83,7 @@ def squadre_libere(crop: Image.Image) -> int:
     return max(0, totale - attive)
 
 # ==============================================================================
-# LETTURA RISORSE dalla barra in alto
+# LETTURA RISORSE dalla barra in alto (inclusi diamanti)
 # ==============================================================================
 
 ZONE_RISORSE = {
@@ -91,6 +91,7 @@ ZONE_RISORSE = {
     "legno":    {"zona": (530, 0, 618, 28), "taglio": 0},
     "acciaio":  {"zona": (625, 0, 702, 28), "taglio": 20},
     "petrolio": {"zona": (720, 0, 800, 28), "taglio": 0},
+    "diamanti": {"zona": (805, 0, 945, 28), "taglio": 20},
 }
 
 def _parse_valore(testo: str) -> float:
@@ -103,6 +104,10 @@ def _parse_valore(testo: str) -> float:
     else:
         m = re.search(r'(\d+)\s*([MKB])', testo, re.IGNORECASE)
         if not m:
+            # Fallback numerico senza suffisso (es. diamanti: '23,793')
+            testo_num = re.sub(r'[^0-9]', '', testo)
+            if testo_num.isdigit():
+                return float(int(testo_num))
             return -1
         cifre = m.group(1)
         mult = m.group(2).upper()
@@ -179,8 +184,6 @@ import cv2
 OCR_COORD_ZONA   = (430, 125, 530, 155)   # box X
 OCR_COORD_ZONA_Y = (535, 125, 635, 155)   # box Y
 
-OCR_COORD_MIN = 0
-OCR_COORD_MAX = 1500  # sanity check: coordinate fuori range (es. 7071) => OCR invalido
 def _ocr_box(img_pil, zona):
     """Legge un box coordinate dal popup. Ritorna intero o None."""
     import numpy as np
@@ -196,13 +199,7 @@ def _ocr_box(img_pil, zona):
             config="--psm 7 -c tessedit_char_whitelist=0123456789XY:#. "
         ).strip()
     numeri = re.findall(r'\d{3,4}', testo)
-    if not numeri:
-        return None
-val = int(numeri[0])
-# Sanity: scarta valori fuori range (evita casi tipo 7071)
-if val < OCR_COORD_MIN or val > OCR_COORD_MAX:
-    return None
-return val
+    return int(numeri[0]) if numeri else None
 
 def leggi_coordinate_nodo(screen_path):
     """
