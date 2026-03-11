@@ -179,6 +179,8 @@ import cv2
 OCR_COORD_ZONA   = (430, 125, 530, 155)   # box X
 OCR_COORD_ZONA_Y = (535, 125, 635, 155)   # box Y
 
+OCR_COORD_MIN = 0
+OCR_COORD_MAX = 1500  # sanity check: coordinate fuori range (es. 7071) => OCR invalido
 def _ocr_box(img_pil, zona):
     """Legge un box coordinate dal popup. Ritorna intero o None."""
     import numpy as np
@@ -194,7 +196,13 @@ def _ocr_box(img_pil, zona):
             config="--psm 7 -c tessedit_char_whitelist=0123456789XY:#. "
         ).strip()
     numeri = re.findall(r'\d{3,4}', testo)
-    return int(numeri[0]) if numeri else None
+    if not numeri:
+        return None
+val = int(numeri[0])
+# Sanity: scarta valori fuori range (evita casi tipo 7071)
+if val < OCR_COORD_MIN or val > OCR_COORD_MAX:
+    return None
+return val
 
 def leggi_coordinate_nodo(screen_path):
     """
