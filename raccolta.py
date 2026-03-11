@@ -1,9 +1,9 @@
 # ==============================================================================
-#  DOOMSDAY BOT V5 - raccolta.py V5.11
+#  DOOMSDAY BOT V5 - raccolta.py V5.12
 #
-# V5.11: Fix fallback contatore squadre
-# - Quando OCR del contatore X/Y non è disponibile, il totale slot non è più hardcoded a 4
-# - Usiamo max_squadre (da config per istanza) come totale slot previsto (tipicamente 4 o 5)
+# V5.12: Blacklist transazionale (reserve/commit/rollback) + TTL invariato 120s (commit)
+# - RESERVED (TTL breve) durante invio; COMMITTED (TTL 120s) dopo conferma contatore
+# - Rollback immediato se la marcia non parte (evita nodo bloccato in blacklist e attese inutili)
 #
 # ==============================================================================
 
@@ -75,15 +75,64 @@ def _leggi_coord_nodo(porta, nome, tipo, squadra, tentativo, retry_n, logger):
     return f"{cx}_{cy}", cx, cy, screen_nodo
 
 def _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo):
-    """Pulisce nodi scaduti e verifica se chiave_nodo è in blacklist. Ritorna bool."""
+    """Pulisce nodi scaduti e verifica se chiave_nodo è in blacklist.
+
+    Formato blacklist (V5.12):
+      - chiave: "X_Y"
+      - valore: {"ts": float, "state": "RESERVED"|"COMMITTED"}
+
+    Retrocompatibilità:
+      - valore float/int → COMMITTED
+    """
     if blacklist is None or blacklist_lock is None:
         return False
+
     with blacklist_lock:
         ora = time.time()
-        scadute = [k for k, t in blacklist.items() if ora - t > BLACKLIST_TTL]
+        scadute = []
+
+        for k, v in list(blacklist.items()):
+            if isinstance(v, (int, float)):
+                state = "COMMITTED"
+                ts = float(v)
+            elif isinstance(v, dict):
+                state = v.get("state", "COMMITTED")
+                ts = float(v.get("ts", 0))
+            else:
+                scadute.append(k)
+                continue
+
+            ttl = BLACKLIST_COMMITTED_TTL if state == "COMMITTED" else BLACKLIST_RESERVED_TTL
+            if ora - ts > ttl:
+                scadute.append(k)
+
         for k in scadute:
-            del blacklist[k]
+            blacklist.pop(k, None)
+
         return chiave_nodo in blacklist
+
+def _blacklist_reserve(blacklist, blacklist_lock, chiave_nodo):
+    """Prenota un nodo in stato RESERVED (TTL breve)."""
+    if blacklist is None or blacklist_lock is None or not chiave_nodo:
+        return
+    with blacklist_lock:
+        blacklist[chiave_nodo] = {"ts": time.time(), "state": "RESERVED"}
+
+
+def _blacklist_commit(blacklist, blacklist_lock, chiave_nodo):
+    """Conferma un nodo in stato COMMITTED (TTL=BLACKLIST_COMMITTED_TTL)."""
+    if blacklist is None or blacklist_lock is None or not chiave_nodo:
+        return
+    with blacklist_lock:
+        blacklist[chiave_nodo] = {"ts": time.time(), "state": "COMMITTED"}
+
+
+def _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo):
+    """Rilascia un nodo dalla blacklist (rollback immediato)."""
+    if blacklist is None or blacklist_lock is None or not chiave_nodo:
+        return
+    _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo)
+
 
 def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
                        logger=None, blacklist=None, blacklist_lock=None):
@@ -163,9 +212,9 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
 
         # Prenota in blacklist subito dopo tap nodo
         if blacklist is not None and blacklist_lock is not None and chiave_nodo:
-            with blacklist_lock:
-                blacklist[chiave_nodo] = time.time()
-                log(f"Nodo ({cx},{cy}) prenotato in blacklist")
+            _blacklist_reserve(blacklist, blacklist_lock, chiave_nodo)
+
+            log(f"Nodo ({cx},{cy}) prenotato in blacklist (RESERVED)")
 
     # --- FASE 5: RACCOGLI → SQUADRA → (truppe) → MARCIA ---
     # Se qualcosa va storto qui, il chiamante rilascia la blacklist (marcia_inviata=False)
@@ -305,8 +354,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         if not marcia_inviata and chiave_nodo:
             log(f"Marcia non inviata - rilascio blacklist nodo {chiave_nodo}")
             if blacklist is not None and blacklist_lock is not None:
-                with blacklist_lock:
-                    blacklist.pop(chiave_nodo, None)
+                _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo)
 
         if nodo_bloccato:
             log(f"Tipo '{tipo}' bloccato da blacklist - squadre successive dello stesso tipo saltate")
@@ -344,8 +392,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
             _reset_stato(porta, nome, screen_post, squadra_n, 1, ciclo, logger)
             # Rilascia blacklist — marcia non confermata
             if chiave_nodo and blacklist is not None and blacklist_lock is not None:
-                with blacklist_lock:
-                    blacklist.pop(chiave_nodo, None)
+                _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo)
                 log(f"Stato inatteso - rilascio blacklist nodo {chiave_nodo}")
             if not stato.vai_in_mappa(porta, nome, logger):
                 log("Impossibile tornare in mappa - abbandono")
@@ -407,8 +454,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
                                      f"attive_reali={attive_reali}")
                 # Rilascia blacklist — la squadra non è partita
                 if chiave_nodo and blacklist is not None and blacklist_lock is not None:
-                    with blacklist_lock:
-                        blacklist.pop(chiave_nodo, None)
+                    _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo)
                     log(f"Squadra respinta - rilascio blacklist nodo {chiave_nodo}")
                 attive_correnti = attive_reali
                 fallimenti_cons += 1

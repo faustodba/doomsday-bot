@@ -40,7 +40,7 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 | Modulo | Descrizione |
 |--------|-------------|
 | `main.py` | Entry point, argomenti `--istanze` / `--emulatore` (retrocompat) |
-| `raccolta.py` | Flusso principale raccolta risorse (V5.11) |
+| `raccolta.py` | Flusso principale raccolta risorse (V5.12) |
 | `alleanza.py` | Automazione menu Alleanza/Dono |
 | `messaggi.py` | Gestione messaggi in-game |
 | `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.2) |
@@ -113,7 +113,8 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 
 ---
 
-## Logica raccolta risorse (raccolta.py V5.11)
+## Logica raccolta risorse (raccolta.py V5.12)
+- **Blacklist transazionale (V5.12):** `RESERVED` (TTL breve) durante invio e `COMMITTED` (TTL 120s) dopo conferma contatore; rollback immediato se la marcia non parte.
 
 ### Loop invio squadre
 - **Loop `while`**: continua finché `attive_correnti < obiettivo` (obiettivo = totale slot)
@@ -132,7 +133,6 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 ### _tap_invia_squadra → ritorna (chiave_nodo, nodo_bloccato, marcia_inviata)
 - `marcia_inviata=True` → MARCIA eseguita (anche se squadra poi respinta)
 - `marcia_inviata=False` → errore prima di MARCIA → chiamante rilascia blacklist
-- **Fallback contatore squadre:** se `stato.conta_squadre()` ritorna -1 anche dopo retry, assume `0/max_squadre` (max_squadre da config per istanza, tipicamente 4 o 5)
 
 ---
 

@@ -136,13 +136,13 @@ lettura contatore reale
 ```
 
 ### Blacklist nodi
+- **V5.12**: blacklist transazionale con stati **RESERVED/COMMITTED** (TTL 120s su COMMITTED).
 
 - TTL fisso: **120 secondi**
 - Se nodo in blacklist → riprova CERCA (lente+tipo+cerca)
 - Se stesso nodo ancora → attesa 120s → riprova
 - Se ancora stesso nodo → skip tipo corrente
 - Blacklist rilasciata se errore prima del tap MARCIA
-- Se il contatore squadre (OCR X/Y) non è visibile: fallback **0/max_squadre** (max_squadre da config per istanza, tipicamente 4 o 5)
 
 ---
 
@@ -192,3 +192,6 @@ tra sessioni di sviluppo con Claude AI.
 | V5.7 | rifornimento integrato nel flusso principale |
 | V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
 | V5.9 | Lettura reale post-MARCIA, blacklist rilasciata su errore, max 3 fallimenti consecutivi |
+
+V5.12 \
+Blacklist transazionale: reserve/commit/rollback (TTL COMMITTED 120s) \
