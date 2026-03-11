@@ -19,20 +19,20 @@ GAME_ACTIVITY  = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDK
 # truppe_raccolta: truppe per squadra (0 = MAX, None = usa TRUPPE_RACCOLTA globale)
 # max_squadre    : numero massimo raccoglitori da inviare (1-5, 0 = usa tutte le libere)
 ISTANZE = [
-    #["FAU_00", "Pie64_6", "5615", 0, 5],
+    ["FAU_00", "Pie64_13", "5685", 0, 5],
     ["FAU_01", "Pie64_6", "5615", 10000, 4],
     ["FAU_02", "Pie64",   "5555", 10000, 4],
-    #["FAU_03", "Pie64_2", "5575", 10000, 4],
-    #["FAU_04", "Pie64_4", "5595", 10000, 4],
-    #["FAU_05", "Pie64_8", "5635", 10000, 4],
-    #["FAU_06", "Pie64_10", "5655", 10000, 4],
-    #["FAU_07", "Pie64_3", "5585", 10000, 4],
-    #["FAU_08", "Pie64_9", "5645", 10000, 4],
+    ["FAU_03", "Pie64_7", "5625", 10000, 4],
+    ["FAU_04", "Pie64_8", "5635", 10000, 4],
+    ["FAU_05", "Pie64_9", "5645", 10000, 4],
+    ["FAU_06", "Pie64_11", "5665", 10000, 4],
+    ["FAU_07", "Pie64_10", "5655", 10000, 4],
+    ["FAU_08", "Pie64_12", "5675", 10000, 4],
 ]
 
 # --- Ciclo automatico ---
 ISTANZE_BLOCCO         = 1    # istanze attive contemporaneamente
-WAIT_MINUTI            = 1   # minuti di attesa tra un ciclo e l'altro
+WAIT_MINUTI            = 5   # minuti di attesa tra un ciclo e l'altro
 
 # --- Raccolta risorse ---
 TRUPPE_RACCOLTA        = 10000  # truppe per squadra globale (0 = MAX)
