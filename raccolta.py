@@ -1,9 +1,10 @@
 # ==============================================================================
-#  DOOMSDAY BOT V5 - raccolta.py V5.12
+#  DOOMSDAY BOT V5 - raccolta.py V5.12.1
 #
-# V5.12: Blacklist transazionale (reserve/commit/rollback) + TTL invariato 120s (commit)
-# - RESERVED (TTL breve) durante invio; COMMITTED (TTL 120s) dopo conferma contatore
-# - Rollback immediato se la marcia non parte (evita nodo bloccato in blacklist e attese inutili)
+# V5.12.1: Hotfix NameError BLACKLIST_RESERVED_TTL + blacklist transazionale stabile
+# - Definisce esplicitamente BLACKLIST_RESERVED_TTL e BLACKLIST_COMMITTED_TTL (120s) a livello modulo
+# - Blacklist: RESERVED (TTL breve) durante invio, COMMITTED (TTL 120s) solo dopo conferma contatore
+# - Evita attese 120s se il nodo è solo RESERVED; rollback immediato se la marcia non parte
 #
 # ==============================================================================
 
@@ -33,8 +34,12 @@ def _reset_stato(porta, nome, screen_path="", squadra=0, tentativo=0, ciclo=0, l
     stato.vai_in_home(porta, nome, logger, conferme=3)
     time.sleep(1.0)
 
-BLACKLIST_TTL          = 120   # secondi — TTL nodo in blacklist (2 min fissi)
-BLACKLIST_ATTESA_NODO  = 120   # secondi — attesa se il gioco ripropone stesso nodo in blacklist
+BLACKLIST_COMMITTED_TTL = 120  # secondi — TTL nodo occupato dopo conferma marcia (stima percorrenza)
+BLACKLIST_RESERVED_TTL  = 45   # secondi — TTL prenotazione temporanea durante transazione UI
+# Retrocompatibilità: BLACKLIST_TTL era usato come unico TTL. Ora equivale al TTL COMMITTED.
+BLACKLIST_TTL           = BLACKLIST_COMMITTED_TTL
+BLACKLIST_ATTESA_NODO   = BLACKLIST_COMMITTED_TTL  # attesa massima quando il gioco ripropone nodo COMMITTED
+
 
 def _cerca_nodo(porta, tipo):
     """Esegue LENTE → CAMPO/SEGHERIA × 2 → CERCA. Riutilizzabile per retry blacklist."""
@@ -77,12 +82,14 @@ def _leggi_coord_nodo(porta, nome, tipo, squadra, tentativo, retry_n, logger):
 def _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo):
     """Pulisce nodi scaduti e verifica se chiave_nodo è in blacklist.
 
-    Formato blacklist (V5.12):
-      - chiave: "X_Y"
-      - valore: {"ts": float, "state": "RESERVED"|"COMMITTED"}
+    Formato blacklist (V5.12+):
+      - chiave: "X_Y" (es. "712_535")
+      - valore: dict {"ts": float, "state": "RESERVED"|"COMMITTED"}
 
     Retrocompatibilità:
-      - valore float/int → COMMITTED
+      - valore float/int → trattato come COMMITTED (ts=valore)
+
+    Ritorna True se chiave_nodo è presente (non scaduto).
     """
     if blacklist is None or blacklist_lock is None:
         return False
@@ -132,6 +139,19 @@ def _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo):
     if blacklist is None or blacklist_lock is None or not chiave_nodo:
         return
     _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo)
+
+
+def _blacklist_get_state(blacklist, blacklist_lock, chiave_nodo):
+    """Ritorna lo stato del nodo in blacklist: RESERVED/COMMITTED oppure None."""
+    if blacklist is None or blacklist_lock is None or not chiave_nodo:
+        return None
+    with blacklist_lock:
+        v = blacklist.get(chiave_nodo)
+    if isinstance(v, dict):
+        return v.get("state")
+    if isinstance(v, (int, float)):
+        return "COMMITTED"
+    return None
 
 
 def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
@@ -301,7 +321,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
     if attive_inizio == -1:
         # Fallback: contatore squadre non visibile → uso max_squadre come totale slot previsto
 
-        # Nota: max_squadre arriva da config per istanza (tipicamente 4 o 5) e per tua scelta coincide con gli slot da riempire
+        # Nota: max_squadre arriva da config per istanza (tipicamente 4 o 5) e coincide con gli slot da riempire
 
         fallback_totale = max_squadre if max_squadre and max_squadre > 0 else 4
 

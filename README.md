@@ -136,7 +136,7 @@ lettura contatore reale
 ```
 
 ### Blacklist nodi
-- **V5.12**: blacklist transazionale con stati **RESERVED/COMMITTED** (TTL 120s su COMMITTED).
+- **V5.12.1**: hotfix NameError su TTL; stati RESERVED/COMMITTED (COMMITTED=120s).
 
 - TTL fisso: **120 secondi**
 - Se nodo in blacklist → riprova CERCA (lente+tipo+cerca)
@@ -193,5 +193,5 @@ tra sessioni di sviluppo con Claude AI.
 | V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
 | V5.9 | Lettura reale post-MARCIA, blacklist rilasciata su errore, max 3 fallimenti consecutivi |
 
-V5.12 \
-Blacklist transazionale: reserve/commit/rollback (TTL COMMITTED 120s) \
+V5.12.1 \
+Hotfix: definizione TTL blacklist + stati RESERVED/COMMITTED (COMMITTED=120s) \

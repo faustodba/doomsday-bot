@@ -40,7 +40,7 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 | Modulo | Descrizione |
 |--------|-------------|
 | `main.py` | Entry point, argomenti `--istanze` / `--emulatore` (retrocompat) |
-| `raccolta.py` | Flusso principale raccolta risorse (V5.12) |
+| `raccolta.py` | Flusso principale raccolta risorse (V5.10) |
 | `alleanza.py` | Automazione menu Alleanza/Dono |
 | `messaggi.py` | Gestione messaggi in-game |
 | `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.2) |
@@ -113,8 +113,7 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 
 ---
 
-## Logica raccolta risorse (raccolta.py V5.12)
-- **Blacklist transazionale (V5.12):** `RESERVED` (TTL breve) durante invio e `COMMITTED` (TTL 120s) dopo conferma contatore; rollback immediato se la marcia non parte.
+## Logica raccolta risorse (raccolta.py V5.10)
 
 ### Loop invio squadre
 - **Loop `while`**: continua finché `attive_correnti < obiettivo` (obiettivo = totale slot)
@@ -211,3 +210,7 @@ web_fetch → https://raw.githubusercontent.com/faustodba/doomsday-bot/main/CONT
 ---
 
 *Ultimo aggiornamento: 2026-03-11*
+
+
+## Patch V5.12.1
+- Hotfix NameError `BLACKLIST_RESERVED_TTL` e blacklist transazionale stabile (RESERVED/COMMITTED).
