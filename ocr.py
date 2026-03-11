@@ -83,7 +83,7 @@ def squadre_libere(crop: Image.Image) -> int:
     return max(0, totale - attive)
 
 # ==============================================================================
-# LETTURA RISORSE dalla barra in alto (inclusi diamanti)
+# LETTURA RISORSE dalla barra in alto
 # ==============================================================================
 
 ZONE_RISORSE = {
@@ -91,7 +91,6 @@ ZONE_RISORSE = {
     "legno":    {"zona": (530, 0, 618, 28), "taglio": 0},
     "acciaio":  {"zona": (625, 0, 702, 28), "taglio": 20},
     "petrolio": {"zona": (720, 0, 800, 28), "taglio": 0},
-    "diamanti": {"zona": (805, 0, 945, 28), "taglio": 20},
 }
 
 def _parse_valore(testo: str) -> float:
@@ -104,10 +103,6 @@ def _parse_valore(testo: str) -> float:
     else:
         m = re.search(r'(\d+)\s*([MKB])', testo, re.IGNORECASE)
         if not m:
-            # Fallback numerico senza suffisso (es. diamanti: '23,793')
-            testo_num = re.sub(r'[^0-9]', '', testo)
-            if testo_num.isdigit():
-                return float(int(testo_num))
             return -1
         cifre = m.group(1)
         mult = m.group(2).upper()
