@@ -1,5 +1,5 @@
 # ==============================================================================
-#  DOOMSDAY BOT V5 - raccolta.py  V5.10
+#  DOOMSDAY BOT V5 - raccolta.py  V5.10.1
 # ==============================================================================
 
 import time
@@ -197,20 +197,6 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
 
     import alleanza as _all
     _all.raccolta_alleanza(porta, nome, logger)
-
-    # Lettura risorse completa in HOME (barra fissa): utile per dashboard
-    # Nota: OCR più stabile in home rispetto alla mappa.
-    stato.vai_in_home(porta, nome, logger, conferme=1)
-    time.sleep(0.8)
-    screen_home = adb.screenshot(porta)
-    ris_home = ocr.leggi_risorse(screen_home)
-    pomodoro_h = ris_home.get("pomodoro", -1)
-    legno_h = ris_home.get("legno", -1)
-    acciaio_h = ris_home.get("acciaio", -1)
-    petrolio_h = ris_home.get("petrolio", -1)
-    diamanti_h = ris_home.get("diamanti", -1)
-    _status.istanza_risorse(nome, pomodoro_h, legno_h, acciaio_h, petrolio_h, diamanti_h)
-
 
 
     gia_in_mappa = stato.rileva(porta)[0] == "mappa"

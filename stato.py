@@ -96,6 +96,45 @@ def _pulisci_overlay(porta: str, nome: str, logger=None) -> str:
 # Vai in mappa
 # V5.3: fino a MAX_TENTATIVI_MAPPA tap, delay crescente, no loop infinito
 # ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Popup "Uscire dal gioco?" (chiusura automatica) - usato prima dell'OCR risorse in HOME
+# ------------------------------------------------------------------------------
+def _in_range(v: int, vmin: int, vmax: int) -> bool:
+    return vmin <= v <= vmax
+
+def _popup_uscita_presente(screen_path: str) -> bool:
+    """Ritorna True se è presente il popup "Uscire dal gioco?"."""
+    r, g, b = adb.leggi_pixel(screen_path, config.POPUP_CHECK_X, config.POPUP_CHECK_Y)
+    if r == -1:
+        return False
+    beige_ok = (_in_range(r, config.BEIGE_R_MIN, config.BEIGE_R_MAX) and
+               _in_range(g, config.BEIGE_G_MIN, config.BEIGE_G_MAX) and
+               _in_range(b, config.BEIGE_B_MIN, config.BEIGE_B_MAX))
+    r2, g2, b2 = adb.leggi_pixel(screen_path, config.POPUP_OK_X, config.POPUP_OK_Y)
+    ok_btn = (_in_range(r2, config.POPUP_OK_R_MIN, config.POPUP_OK_R_MAX) and
+             _in_range(g2, config.POPUP_OK_G_MIN, config.POPUP_OK_G_MAX) and
+             _in_range(b2, config.POPUP_OK_B_MIN, config.POPUP_OK_B_MAX))
+    return beige_ok and ok_btn
+
+def chiudi_popup_uscita(porta: str, nome: str = "", logger=None, max_tentativi: int = 3) -> bool:
+    """Se presente, chiude il popup "Uscire dal gioco?" premendo ANNULLA."""
+    def log(msg):
+        if logger: logger(nome, msg)
+    chiuso = False
+    for _ in range(max_tentativi):
+        screen = adb.screenshot(porta)
+        if not screen:
+            return chiuso
+        if _popup_uscita_presente(screen):
+            log("Popup 'Uscire dal gioco?' rilevato - chiudo (ANNULLA)")
+            adb.tap(porta, (config.POPUP_ANNULLA_X, config.POPUP_ANNULLA_Y), delay_ms=0)
+            time.sleep(1.0)
+            chiuso = True
+        else:
+            return chiuso
+    return chiuso
+
 def vai_in_mappa(porta: str, nome: str, logger=None) -> bool:
     """
     Porta l'istanza in mappa.
