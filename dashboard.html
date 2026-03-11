@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doomsday Bot V5 — Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oswald:wght@300;400;600&display=swap');
+
+  :root {
+    --bg:        #f0f2f5;
+    --bg2:       #ffffff;
+    --bg3:       #e4e8ef;
+    --border:    #cdd4df;
+    --accent:    #c07010;
+    --accent2:   #8a4e00;
+    --green:     #1a8a4a;
+    --green-bg:  #e6f4ed;
+    --red:       #c0392b;
+    --red-bg:    #fbeae8;
+    --yellow:    #b07800;
+    --yellow-bg: #fdf6e3;
+    --blue:      #1a6aaa;
+    --blue-bg:   #e8f1fb;
+    --text:      #1a2030;
+    --text-dim:  #6a7a95;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Oswald', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--border);
+    background: var(--bg2);
+    padding: 16px 24px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .logo { display: flex; align-items: baseline; gap: 10px; }
+  .logo h1 { font-family: var(--sans); font-size: 26px; font-weight: 600; color: var(--accent); letter-spacing: 2px; }
+  .logo span { font-size: 12px; color: var(--accent2); letter-spacing: 1px; }
+  .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .bot-status { font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; color: var(--text); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
+  .dot.waiting { background: var(--yellow); }
+  .dot.stopped { background: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .last-update { font-size: 11px; color: var(--text-dim); }
+
+  /* ── Info bar ── */
+  .info-bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .info-chip { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 12px; color: var(--text-dim); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .info-chip span { color: var(--accent); margin-left: 6px; font-weight: bold; }
+
+  /* ── Countdown ── */
+  .countdown-bar { background: var(--yellow-bg); border: 1px solid #e0c060; border-radius: 6px; padding: 10px 16px; margin-bottom: 16px; font-size: 12px; color: var(--yellow); display: flex; align-items: center; gap: 12px; }
+  .countdown-bar.hidden { display: none; }
+  .countdown-progress { flex: 1; height: 5px; background: #e0d0a0; border-radius: 2px; overflow: hidden; }
+  .countdown-fill { height: 100%; background: var(--yellow); transition: width 1s linear; }
+
+  /* ── Summary ── */
+  .summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .summary-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; text-align: center; flex: 1; min-width: 110px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .summary-card .num { font-family: var(--sans); font-size: 34px; font-weight: 600; line-height: 1; margin-bottom: 4px; }
+  .summary-card .lbl { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+  .num.running { color: var(--green); }
+  .num.done    { color: var(--blue); }
+  .num.avvio   { color: var(--yellow); }
+  .num.error   { color: var(--red); }
+  .num.idle    { color: var(--text-dim); }
+
+  /* ── Section title ── */
+  .section-title { font-family: var(--sans); font-size: 11px; font-weight: 400; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 12px; margin-top: 24px; }
+
+  /* ── Istanze grid ── */
+  .instances-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+
+  .instance-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    transition: box-shadow 0.2s;
+  }
+  .instance-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--border); }
+  .instance-card.running  { border-color: #a8dfc0; background: var(--green-bg); }
+  .instance-card.running::before { background: var(--green); }
+  .instance-card.avvio    { border-color: #e8d080; background: var(--yellow-bg); }
+  .instance-card.avvio::before   { background: var(--yellow); }
+  .instance-card.done     { border-color: #a0c8f0; background: var(--blue-bg); }
+  .instance-card.done::before    { background: var(--blue); }
+  .instance-card.error    { border-color: #f0a8a0; background: var(--red-bg); }
+  .instance-card.error::before   { background: var(--red); }
+  .instance-card.idle     { opacity: 0.6; }
+
+  .instance-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .instance-name { font-family: var(--sans); font-size: 15px; font-weight: 600; letter-spacing: 1px; color: var(--text); }
+  .instance-stato { font-size: 11px; font-weight: bold; }
+  .instance-stato.idle    { color: var(--text-dim); }
+  .instance-stato.avvio   { color: var(--yellow); }
+  .instance-stato.running { color: var(--green); }
+  .instance-stato.done    { color: var(--blue); }
+  .instance-stato.error   { color: var(--red); }
+
+  .instance-rows { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .instance-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
+  .instance-row span:last-child { color: var(--text); font-weight: bold; }
+  .instance-row span.warn { color: var(--red); }
+  .instance-row span.ok   { color: var(--green); }
+
+  .squadre-bar-track { height: 4px; background: var(--border); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  .squadre-bar-fill  { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.5s; }
+
+  /* ── Storico ── */
+  .storico-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+  .storico-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .storico-table th { text-align: left; color: var(--text-dim); font-weight: normal; padding: 8px 14px; border-bottom: 2px solid var(--border); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; background: var(--bg3); }
+  .storico-table td { padding: 7px 14px; border-bottom: 1px solid var(--bg3); color: var(--text); }
+  .storico-table tr:last-child td { border-bottom: none; }
+  .storico-table tr:hover td { background: var(--bg3); }
+  .storico-table td.accent { color: var(--accent); font-weight: bold; }
+  .storico-table td.green  { color: var(--green); font-weight: bold; }
+  .storico-table td.dim    { color: var(--text-dim); }
+
+  /* ── Refresh bar ── */
+  .refresh-bar { height: 3px; background: var(--border); border-radius: 2px; margin-bottom: 16px; overflow: hidden; }
+  .refresh-bar-inner { height: 100%; background: var(--accent); animation: countdown-bar 3s linear infinite; }
+  @keyframes countdown-bar { from { width: 100%; } to { width: 0%; } }
+
+  .conn-error { display: none; background: var(--red-bg); border: 1px solid #f0a8a0; border-radius: 6px; padding: 10px 16px; font-size: 12px; color: var(--red); margin-bottom: 16px; }
+
+  footer { padding-top: 14px; font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; margin-top: 24px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <h1>☣ DOOMSDAY BOT</h1>
+    <span>V5 DASHBOARD</span>
+  </div>
+  <div class="header-right">
+    <div class="bot-status">
+      <span class="dot stopped" id="botDot"></span>
+      <span id="botLabel">FERMO</span>
+    </div>
+    <div class="last-update" id="lastUpdate">—</div>
+  </div>
+</header>
+
+<div class="conn-error" id="connError">
+  ⚠ Impossibile leggere status.json — assicurati che il bot sia in esecuzione e il server HTTP attivo.
+</div>
+
+<div class="info-bar">
+  <div class="info-chip">Emulatore <span id="emuLabel">—</span></div>
+  <div class="info-chip">Ciclo <span id="cicloLabel">—</span></div>
+  <div class="info-chip">Aggiornato <span id="timeLabel">—</span></div>
+</div>
+
+<div class="countdown-bar hidden" id="countdownBar">
+  <span id="countdownLabel">⏳ prossimo ciclo in —</span>
+  <div class="countdown-progress"><div class="countdown-fill" id="countdownFill" style="width:100%"></div></div>
+</div>
+
+<div class="refresh-bar"><div class="refresh-bar-inner"></div></div>
+
+<div class="section-title">Riepilogo</div>
+<div class="summary">
+  <div class="summary-card"><div class="num running" id="cntRunning">0</div><div class="lbl">In raccolta</div></div>
+  <div class="summary-card"><div class="num avvio"   id="cntAvvio">0</div><div class="lbl">In avvio</div></div>
+  <div class="summary-card"><div class="num done"    id="cntDone">0</div><div class="lbl">Completate</div></div>
+  <div class="summary-card"><div class="num error"   id="cntError">0</div><div class="lbl">Errori</div></div>
+  <div class="summary-card"><div class="num idle"    id="cntIdle">0</div><div class="lbl">Inattive</div></div>
+</div>
+
+<div class="section-title">Stato Istanze</div>
+<div class="instances-grid" id="instancesGrid"></div>
+
+<div class="section-title">Storico Cicli</div>
+<div class="storico-wrap">
+  <table class="storico-table">
+    <thead>
+      <tr><th>Ciclo</th><th>Ora</th><th>Squadre</th><th>Durata</th></tr>
+    </thead>
+    <tbody id="storicoBody">
+      <tr><td colspan="4" class="dim" style="padding:12px 14px">Nessun ciclo completato</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer>
+  <span>Auto-refresh ogni 3 secondi</span>
+  <span id="footerInfo">—</span>
+</footer>
+
+<script>
+const STATUS_FILE = "status.json";
+const REFRESH_MS  = 3000;
+
+const STATO_MAP = {
+  "attesa":      "idle",
+  "avvio":       "avvio",
+  "caricamento": "avvio",
+  "raccolta":    "running",
+  "completata":  "done",
+  "errore":      "error",
+  "timeout":     "error",
+  "watchdog":    "error",
+};
+
+const STATI_LABEL = {
+  idle:    "○ inattiva",
+  avvio:   "◌ avvio...",
+  running: "● raccolta",
+  done:    "✓ completata",
+  error:   "✗ errore",
+};
+
+let _waitTotal = 0;
+
+async function fetchStatus() {
+  try {
+    const res = await fetch(STATUS_FILE + "?t=" + Date.now());
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch(e) { return null; }
+}
+
+function fmt(val) {
+  if (val === undefined || val === null || val < 0) return "—";
+  return val.toFixed(1) + "M";
+}
+
+function aggiorna(data) {
+  const errDiv = document.getElementById("connError");
+  if (!data) { errDiv.style.display = "block"; return; }
+  errDiv.style.display = "none";
+
+  const botStato = data.stato || "idle";
+  const running  = botStato === "running";
+  const waiting  = botStato === "waiting";
+  document.getElementById("botDot").className     = "dot " + (running ? "running" : waiting ? "waiting" : "stopped");
+  document.getElementById("botLabel").textContent = running ? "IN ESECUZIONE" : waiting ? "IN ATTESA" : "FERMO";
+  const ts = data.ts_aggiornato || "—";
+  document.getElementById("emuLabel").textContent   = data.emulatore || "BlueStacks";
+  document.getElementById("cicloLabel").textContent = data.ciclo || "0";
+  document.getElementById("timeLabel").textContent  = ts;
+  document.getElementById("lastUpdate").textContent = "aggiornato " + ts;
+  document.getElementById("footerInfo").textContent = "ciclo " + (data.ciclo || 0);
+
+  // Countdown
+  const cdBar = document.getElementById("countdownBar");
+  const cdSec = data.countdown_s || 0;
+  if (waiting && cdSec > 0) {
+    cdBar.classList.remove("hidden");
+    const m = Math.floor(cdSec / 60), s = cdSec % 60;
+    document.getElementById("countdownLabel").textContent = `⏳ prossimo ciclo in ${m}:${String(s).padStart(2,"0")}`;
+    if (cdSec > _waitTotal) _waitTotal = cdSec;
+    document.getElementById("countdownFill").style.width = (_waitTotal > 0 ? cdSec / _waitTotal * 100 : 100) + "%";
+  } else {
+    cdBar.classList.add("hidden");
+    if (!waiting) _waitTotal = 0;
+  }
+
+  // Contatori
+  const cnt = {idle:0, avvio:0, running:0, done:0, error:0};
+  const istanze = data.istanze || {};
+  for (const n in istanze) {
+    const css = STATO_MAP[istanze[n].stato || "attesa"] || "idle";
+    cnt[css]++;
+  }
+  document.getElementById("cntRunning").textContent = cnt.running;
+  document.getElementById("cntAvvio").textContent   = cnt.avvio;
+  document.getElementById("cntDone").textContent    = cnt.done;
+  document.getElementById("cntError").textContent   = cnt.error;
+  document.getElementById("cntIdle").textContent    = cnt.idle;
+
+  // Griglia istanze
+  const grid = document.getElementById("instancesGrid");
+  grid.innerHTML = "";
+  for (const nome of Object.keys(istanze)) {
+    const ist      = istanze[nome];
+    const statoRaw = ist.stato || "attesa";
+    const css      = STATO_MAP[statoRaw] || "idle";
+
+    const card = document.createElement("div");
+    card.className = "instance-card " + css;
+
+    card.innerHTML = `<div class="instance-header">
+      <div class="instance-name">${nome}</div>
+      <div class="instance-stato ${css}">${STATI_LABEL[css] || statoRaw}</div>
+    </div>`;
+
+    const rows = document.createElement("div");
+    rows.className = "instance-rows";
+    let hasRows = false;
+
+    const target  = ist.squadre_target  || 0;
+    const inviate = ist.squadre_inviate || 0;
+    if (target > 0) {
+      hasRows = true;
+      const pct = Math.min(100, inviate / target * 100);
+      rows.innerHTML += `<div class="instance-row"><span>Squadre</span><span class="${inviate>=target?'ok':''}">${inviate} / ${target}</span></div>
+        <div class="squadre-bar-track"><div class="squadre-bar-fill" style="width:${pct}%"></div></div>`;
+    }
+
+    const hasRis = [ist.pomodoro, ist.legno, ist.acciaio, ist.petrolio, ist.diamanti].some(v => v !== undefined && v >= 0);
+    if (hasRis) {
+      hasRows = true;
+      rows.innerHTML += `<div class="instance-row"><span>🍅 Pomodoro</span><span>${fmt(ist.pomodoro)}</span></div>`;
+      rows.innerHTML += `<div class="instance-row"><span>🪵 Legno</span><span>${fmt(ist.legno)}</span></div>`;
+      if (ist.acciaio >= 0) rows.innerHTML += `<div class="instance-row"><span>⚙ Acciaio</span><span>${fmt(ist.acciaio)}</span></div>`;
+      if (ist.petrolio >= 0) rows.innerHTML += `<div class="instance-row"><span>🛢 Petrolio</span><span>${fmt(ist.petrolio)}</span></div>`;
+    }
+
+    if (ist.durata_s > 0) {
+      hasRows = true;
+      const dm = Math.floor(ist.durata_s/60), ds = ist.durata_s % 60;
+      rows.innerHTML += `<div class="instance-row"><span>⏱ Durata</span><span>${dm}m ${ds}s</span></div>`;
+    }
+    if (ist.ocr_fail > 0)   { hasRows = true; rows.innerHTML += `<div class="instance-row"><span>OCR fail</span><span class="warn">${ist.ocr_fail}</span></div>`; }
+    if (ist.cnt_errati > 0) { hasRows = true; rows.innerHTML += `<div class="instance-row"><span>Cnt errati</span><span class="warn">${ist.cnt_errati}</span></div>`; }
+    if (ist.ts_inizio)      { hasRows = true; rows.innerHTML += `<div class="instance-row"><span>Inizio</span><span>${ist.ts_inizio}</span></div>`; }
+
+    if (hasRows) card.appendChild(rows);
+    grid.appendChild(card);
+  }
+
+  // Storico
+  const storico = data.storico_cicli || [];
+  const tbody   = document.getElementById("storicoBody");
+  if (storico.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="dim" style="padding:12px 14px">Nessun ciclo completato</td></tr>';
+  } else {
+    tbody.innerHTML = "";
+    [...storico].reverse().forEach(c => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="accent">#${c.ciclo}</td><td class="dim">${c.ts||"—"}</td><td class="green">${c.squadre}</td><td class="dim">${c.durata_m} min</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+async function loop() {
+  const data = await fetchStatus();
+  aggiorna(data);
+  setTimeout(loop, REFRESH_MS);
+}
+loop();
+</script>
+</body>
+</html>
