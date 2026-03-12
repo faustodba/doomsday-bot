@@ -19,13 +19,13 @@ GAME_ACTIVITY  = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDK
 # truppe_raccolta: truppe per squadra (0 = MAX, None = usa TRUPPE_RACCOLTA globale)
 # max_squadre    : numero massimo raccoglitori da inviare (1-5, 0 = usa tutte le libere)
 ISTANZE = [
-    ["FAU_00", "Pie64_13", "5685", 0, 5],
-    ["FAU_01", "Pie64_6", "5615", 10000, 4],
-    ["FAU_02", "Pie64",   "5555", 10000, 4],
-    ["FAU_03", "Pie64_7", "5625", 10000, 4],
-    ["FAU_04", "Pie64_8", "5635", 10000, 4],
-    ["FAU_05", "Pie64_9", "5645", 10000, 4],
-    ["FAU_06", "Pie64_11", "5665", 10000, 4],
+    #["FAU_00", "Pie64_13", "5685", 0, 5],
+    #["FAU_01", "Pie64_6", "5615", 10000, 4],
+    #["FAU_02", "Pie64",   "5555", 10000, 4],
+    #["FAU_03", "Pie64_7", "5625", 10000, 4],
+    #["FAU_04", "Pie64_8", "5635", 10000, 4],
+    #["FAU_05", "Pie64_9", "5645", 10000, 4],
+    #["FAU_06", "Pie64_11", "5665", 10000, 4],
     ["FAU_07", "Pie64_10", "5655", 10000, 4],
     ["FAU_08", "Pie64_12", "5675", 10000, 4],
 ]
@@ -63,6 +63,14 @@ STATO_SOGLIA_R = 160   # R<160=home, R>160=mappa, RGB<30=banner
 
 # --- Contatore squadre (OCR) ---
 OCR_ZONA = (855, 115, 945, 145)   # zona crop screenshot per OCR X/4
+# --- OCR tempo ETA (maschera "Marcia") ---
+# Base riferita a 960x540; la zona viene scalata automaticamente alle dimensioni reali dello screenshot.
+OCR_MARCIA_ETA_BASE_W = 960
+OCR_MARCIA_ETA_BASE_H = 540
+OCR_MARCIA_ETA_ZONA = (600, 400, 930, 510)
+OCR_MARCIA_ETA_MARGINE_S = 5   # margine (s) per attese basate su ETA
+OCR_MARCIA_ETA_MIN_S = 8       # minimo attesa (s) quando ETA disponibile
+OCR_MARCIA_ETA_DEBUG_SAVE = True  # salva crop ETA quando non leggibile (diagnostica)
 
 # --- Popup "Uscire dal gioco?" (rilevamento caricamento) ---
 POPUP_CHECK_X   = 480

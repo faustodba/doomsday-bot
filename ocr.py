@@ -82,6 +82,101 @@ def squadre_libere(crop: Image.Image) -> int:
         return -1
     return max(0, totale - attive)
 
+# ------------------------------------------------------------------------------
+# Leggi ETA (tempo di arrivo) dalla maschera "Marcia"
+# Ritorna (secondi, testo_ocr). Se non leggibile: (None, testo_ocr)
+# ------------------------------------------------------------------------------
+_eta_re = re.compile(r"(?:(\d+)\s*:\s*(\d{2})\s*:\s*(\d{2}))|(?:(\d{1,2})\s*:\s*(\d{2}))")
+
+
+def _parse_eta_to_seconds(testo: str):
+    """Parsa 'H:MM:SS' oppure 'MM:SS' e ritorna secondi (int) o None."""
+    if not testo:
+        return None
+    t = testo.strip().replace(' ', '')
+    t = t.replace('O', '0').replace('o', '0')
+    m = _eta_re.search(t)
+    if not m:
+        return None
+    if m.group(1) is not None:
+        h = int(m.group(1)); mm = int(m.group(2)); ss = int(m.group(3))
+        return h * 3600 + mm * 60 + ss
+    mm = int(m.group(4)); ss = int(m.group(5))
+    return mm * 60 + ss
+
+
+def _preprocessa_eta(img: Image.Image) -> Image.Image:
+    """Preprocessa crop ETA: scala grigi, aumenta contrasto, filtra rumore, upscale, soglia."""
+    w, h = img.size
+    img2 = img.convert('L')
+    img2 = ImageEnhance.Contrast(img2).enhance(2.3)
+    img2 = img2.filter(ImageFilter.MedianFilter(size=3))
+    img2 = img2.resize((w * 4, h * 4), Image.LANCZOS)
+    img2 = img2.point(lambda p: 255 if p > 140 else 0)
+    return img2
+
+
+def _scala_zona(zona, w, h):
+    """Scala zona (x1,y1,x2,y2) dalla base (OCR_MARCIA_ETA_BASE_W/H) alle dimensioni reali."""
+    base_w = getattr(config, 'OCR_MARCIA_ETA_BASE_W', 960)
+    base_h = getattr(config, 'OCR_MARCIA_ETA_BASE_H', 540)
+    sx = float(w) / float(base_w)
+    sy = float(h) / float(base_h)
+    x1, y1, x2, y2 = zona
+    return (int(x1 * sx), int(y1 * sy), int(x2 * sx), int(y2 * sy))
+
+
+def leggi_eta_marcia_da_crop(crop: Image.Image):
+    """OCR robusto ETA su crop. Ritorna (sec, raw)."""
+    def _ocr_img(img: Image.Image):
+        cfg = "--psm 6 -c tessedit_char_whitelist=0123456789:"
+        with _tesseract_lock:
+            return pytesseract.image_to_string(img, config=cfg).strip()
+    try:
+        img1 = _preprocessa_eta(crop)
+        t1 = _ocr_img(img1)
+        sec = _parse_eta_to_seconds(t1)
+        if sec is not None:
+            return sec, t1
+
+        inv = ImageOps.invert(img1.convert('L'))
+        inv = inv.point(lambda p: 255 if p > 140 else 0)
+        t2 = _ocr_img(inv)
+        sec2 = _parse_eta_to_seconds(t2)
+        if sec2 is not None:
+            return sec2, t2
+
+        return None, (t1 or t2)
+    except Exception:
+        return None, ''
+
+
+def leggi_eta_marcia(screen_path: str):
+    """Legge ETA dalla maschera 'Marcia' a partire dallo screenshot completo."""
+    try:
+        zona = getattr(config, 'OCR_MARCIA_ETA_ZONA', None)
+        if not zona:
+            return None, ''
+        img = Image.open(screen_path)
+        w, h = img.size
+        zona2 = _scala_zona(zona, w, h)
+        crop = img.crop(zona2)
+        sec, raw = leggi_eta_marcia_da_crop(crop)
+
+        try:
+            if sec is None and getattr(config, 'OCR_MARCIA_ETA_DEBUG_SAVE', False):
+                import os
+                from datetime import datetime
+                d = os.path.join(config.BOT_DIR, 'debug_eta')
+                os.makedirs(d, exist_ok=True)
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                crop.save(os.path.join(d, f'eta_fail_{ts}.png'))
+        except Exception:
+            pass
+
+        return sec, raw
+    except Exception:
+        return None, ''
 # ==============================================================================
 # LETTURA RISORSE dalla barra in alto
 # ==============================================================================
