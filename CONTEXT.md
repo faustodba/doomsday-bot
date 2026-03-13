@@ -40,10 +40,10 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 | Modulo | Descrizione |
 |--------|-------------|
 | `main.py` | Entry point, argomenti `--istanze` / `--emulatore` (retrocompat) |
-| `raccolta.py` | Flusso principale raccolta risorse (V5.10) |
+| `raccolta.py` | Flusso principale raccolta risorse |
 | `alleanza.py` | Automazione menu Alleanza/Dono |
 | `messaggi.py` | Gestione messaggi in-game |
-| `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.2) |
+| `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.12) |
 | `bluestacks.py` | Gestione ciclo vita BlueStacks |
 | `mumu.py` | Gestione ciclo vita MuMuPlayer 12 |
 | `emulatore_base.py` | Modulo base condiviso tra emulatori |
@@ -60,7 +60,8 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 
 ### File di test presenti nel repo
 `test_alleanza.py`, `test_coordinate.py`, `test_coordinate2.py`, `test_messaggi.py`,
-`test_mumu.py`, `test_ocr.py`, `test_ocr_nodo.py`, `test_rifornimento.py`, `test_tap.py`
+`test_mumu.py`, `test_ocr.py`, `test_ocr_nodo.py`, `test_rifornimento.py`,
+`test_rifornimento_steps.py`, `test_tap.py`
 
 ### File patch presenti nel repo
 `main_patch_blacklist.py`, `ocr_patch_leggi_coordinate_nodo.py`
@@ -70,7 +71,7 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 ## Flusso raccolta_istanza (ordine esecuzione)
 
 ```
-messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
+messaggi → alleanza → rifornimento (in HOME) → vai_in_mappa → raccolta risorse
 ```
 
 ---
@@ -103,17 +104,28 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 
 > ⚠️ Problema noto: `cx=None` occasionale — fix: aumentare delay dopo TAP_LENTE_COORD (attualmente 800ms)
 
-### rifornimento.py
+### rifornimento.py (V5.12)
 | Costante | Valore |
 |----------|--------|
 | `RIFORNIMENTO_DESTINATARIO` | configurabile in config.py |
-| `RIFORNIMENTO_SOGLIA_M` | 10.0 |
-| `RIFORNIMENTO_AVATAR` | template matching crop (147,278,204,328), soglia 0.75 |
-| OCR pulsante | x=443, y variabile |
+| `RIFORNIMENTO_SOGLIA_M` | 10.0M — non invia se deposito sotto soglia |
+| `RIFORNIMENTO_QTA_*` | valore alto (es. 999M) — il gioco applica il cap automaticamente |
+| `RIFORNIMENTO_ABILITATO` | True/False — flag abilitazione in config.py |
+| Reset quota giornaliera | 01:00 UTC — stato salvato in `rifornimento_stato_{nome}.json` |
+
+**Flusso rifornimento:**
+1. Controlla quota giornaliera (`rifornimento_stato_{nome}.json`) — skip se esaurita
+2. `vai_in_home` + legge deposito reale via OCR
+3. Seleziona risorsa con rotazione (pomodoro → legno → pomodoro...)
+4. Naviga Alleanza → Membri → apre toggle R4/R3/R2/R1 (cerca avatar in parallelo)
+5. Trova avatar FauMorfeus via template matching
+6. Apre maschera → legge tassa OCR → compila quantità → VAI
+7. Coda volo `deque(timestamp, eta_ar)` per calcolo attesa ottimale slot
+8. Quando provviste = 0 → salva stato quota esaurita su file
 
 ---
 
-## Logica raccolta risorse (raccolta.py V5.10)
+## Logica raccolta risorse (raccolta.py)
 
 ### Loop invio squadre
 - **Loop `while`**: continua finché `attive_correnti < obiettivo` (obiettivo = totale slot)
@@ -123,15 +135,8 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 - **Blacklist rilasciata** se errore prima del tap MARCIA (marcia_inviata=False)
 - **Blacklist rilasciata** se squadra respinta (contatore invariato dopo retry)
 - **OCR fail post-MARCIA:** retry dopo 3s prima di contare come fallimento
-  - ancora -1 → fallimento reale
-  - aumentato → confermata con ritardo (fallimenti_cons = 0)
-  - invariato → respinta → rilascia blacklist
 - **Tipi bloccati:** se nodo sempre in blacklist per un tipo → skip tutte le squadre di quel tipo
 - **Uscita anticipata** se tutti i tipi disponibili sono bloccati
-
-### _tap_invia_squadra → ritorna (chiave_nodo, nodo_bloccato, marcia_inviata)
-- `marcia_inviata=True` → MARCIA eseguita (anche se squadra poi respinta)
-- `marcia_inviata=False` → errore prima di MARCIA → chiamante rilascia blacklist
 
 ---
 
@@ -150,19 +155,13 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 
 ---
 
-## Screenshot e OCR
-- Screenshot effettuato **PRIMA** del tap sul nodo (raccolta.py V5.5+)
-- OCR zona nodo: coordinata con metodo OTSU
-
----
-
 ## launcher.py (GUI tkinter)
 - Radio button: BlueStacks / MuMuPlayer
 - Checkbox per selezione istanze (da config.py)
 - Stato real-time via `status.json`
 - Dashboard HTML con auto-refresh ogni 3 secondi
 
-> ⚠️ **Problema aperto:** launcher non funziona — errore in `bluestacks.py` → `emulatore_base.py` → `attendi_e_raccogli_istanza`
+> ⚠️ **Problema aperto:** launcher non funzionante — errore in `bluestacks.py` → `emulatore_base.py` → `attendi_e_raccogli_istanza`
 
 ---
 
@@ -179,8 +178,11 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 - **EWMA** per adaptive timing (non usare sleep fissi)
 - **Screenshot PRIMA del tap** sul nodo per OCR affidabile
 - **Loop while** per raccolta (non range fisso) — continua finché slot liberi
-- **Lettura reale** contatore post-MARCIA (non calcolo progressivo `attive_attese`)
+- **Lettura reale** contatore post-MARCIA (non calcolo progressivo)
 - **3 fallimenti consecutivi** come soglia abbandono raccolta
+- **Quantità rifornimento alta** in config (es. 999M) — il gioco applica il cap, il bot non deve calcolarlo
+- **Tassa rifornimento letta OCR** dalla maschera ad ogni spedizione (non hardcodata)
+- **Quota giornaliera** salvata su file per istanza — reset automatico alle 01:00 UTC
 
 ---
 
@@ -196,7 +198,9 @@ messaggi → alleanza → rifornimento → vai_in_mappa → raccolta risorse
 | V5.7 | rifornimento integrato nel flusso principale |
 | V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
 | V5.9 | Fix blacklist: prenotata dopo tap nodo, rilasciata su errore; lettura reale post-MARCIA; max 3 fallimenti consecutivi |
-| V5.10 | OCR fail post-MARCIA: retry 3s prima di contare fallimento; loop while invece di range fisso |
+| V5.10 | OCR fail post-MARCIA: retry 3s; loop while invece di range fisso |
+| V5.11 | rifornimento.py rebuild: template matching badge/frecce/avatar |
+| V5.12 | rifornimento completo: coda volo timestamp, tassa OCR, quota giornaliera con reset 01:00 UTC, flag RIFORNIMENTO_ABILITATO |
 
 ---
 
@@ -209,8 +213,4 @@ web_fetch → https://raw.githubusercontent.com/faustodba/doomsday-bot/main/CONT
 
 ---
 
-*Ultimo aggiornamento: 2026-03-11*
-
-
-## Patch V5.12.1
-- Hotfix NameError `BLACKLIST_RESERVED_TTL` e blacklist transazionale stabile (RESERVED/COMMITTED).
+*Ultimo aggiornamento: 2026-03-13*

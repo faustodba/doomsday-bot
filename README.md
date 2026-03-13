@@ -10,7 +10,7 @@ Il bot gestisce in modo automatico le operazioni ripetitive del gioco su più is
 
 - Raccolta messaggi (tab Alleanza e Sistema)
 - Raccolta ricompense Alleanza (Negozio + Attività)
-- Invio rifornimenti ad altri giocatori
+- Invio rifornimenti ad altri giocatori con gestione quota giornaliera
 - Ricerca e invio raccoglitori su nodi risorse (campo/segheria)
 - Bilanciamento automatico delle risorse (pomodoro vs legno)
 - Gestione blacklist nodi per evitare sovrapposizioni tra raccoglitori
@@ -39,20 +39,11 @@ main.py
 │       │   └── raccolta_istanza() → raccolta.py
 │       │       ├── messaggi.py
 │       │       ├── alleanza.py
-│       │       ├── rifornimento.py
+│       │       ├── rifornimento.py   ← eseguito in HOME prima della mappa
 │       │       └── loop invio squadre
 │       └── chiudi_istanza()
 └── cleanup_istanze_appese()
 ```
-
-### Istanze configurate
-
-| Istanza | Emulatore | Porta ADB |
-|---------|-----------|-----------|
-| FAU_00 | BlueStacks | configurabile |
-| FAU_01 | BlueStacks | 5615 |
-| FAU_02 | BlueStacks | 5555 |
-| FAU_03–08 | BlueStacks/MuMu | configurabili |
 
 ---
 
@@ -64,13 +55,13 @@ main.py
 | `raccolta.py` | Flusso raccolta risorse per singola istanza |
 | `alleanza.py` | Automazione menu Alleanza/Dono |
 | `messaggi.py` | Raccolta messaggi in-game |
-| `rifornimento.py` | Invio rifornimenti ad altri giocatori |
+| `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.12) |
 | `bluestacks.py` | Gestione ciclo vita BlueStacks |
 | `mumu.py` | Gestione ciclo vita MuMuPlayer 12 |
 | `emulatore_base.py` | Logica comune condivisa tra emulatori |
 | `adb.py` | Comandi ADB (tap, screenshot, keyevent) |
 | `ocr.py` | Lettura testo da screenshot (Tesseract) |
-| `stato.py` | Rilevamento stato gioco (home/mappa) |
+| `stato.py` | Rilevamento stato gioco (home/mappa/overlay) |
 | `config.py` | Configurazione centralizzata |
 | `timing.py` | EWMA adaptive timing |
 | `log.py` | Logging centralizzato |
@@ -121,39 +112,45 @@ python main.py --emulatore 1 --istanze FAU_01,FAU_02
 messaggi → alleanza → rifornimento → vai_in_mappa → loop invio squadre
 ```
 
-### Loop invio squadre
+### Rifornimento alleato (rifornimento.py V5.12)
+
+```
+controlla quota giornaliera (file JSON per istanza)
+  └── quota esaurita? → skip fino alle 01:00 UTC
+vai_in_home → leggi deposito OCR
+  └── risorsa sotto soglia (10M)? → stop
+seleziona risorsa (rotazione pomodoro/legno)
+naviga Alleanza → Membri
+  └── apri toggle R4/R3/R2/R1 (cerca avatar in parallelo)
+trova FauMorfeus via template matching
+apre maschera → legge tassa OCR → compila quantità → VAI
+coda volo (timestamp + ETA) → calcolo attesa ottimale slot
+  └── slot=0 → attendi rientro prima spedizione (non ETA fisso)
+quota provviste=0 → salva stato su file
+```
+
+### Loop invio squadre raccolta
 
 ```
 lettura contatore reale
   └── per ogni squadra da inviare:
         CERCA → OCR coordinate nodo
         ├── nodo in blacklist? → attendi / skip tipo
-        └── nodo libero → TAP_NODO → prenota blacklist
-              → RACCOGLI → SQUADRA → MARCIA
+        └── nodo libero → TAP_NODO → prenota blacklist (RESERVED)
+              → RACCOGLI → SQUADRA → MARCIA → COMMITTED
               → rileggi contatore reale
               ├── aumentato → squadra confermata ✅
               └── invariato → squadra respinta → rilascia blacklist 🔄
 ```
 
-### Blacklist nodi
-- **V5.12.1**: hotfix NameError su TTL; stati RESERVED/COMMITTED (COMMITTED=120s).
-
-- TTL fisso: **120 secondi**
-- Se nodo in blacklist → riprova CERCA (lente+tipo+cerca)
-- Se stesso nodo ancora → attesa 120s → riprova
-- Se ancora stesso nodo → skip tipo corrente
-- Blacklist rilasciata se errore prima del tap MARCIA
-
 ---
 
 ## ⏱️ Timing adattivo
 
-Il bot usa **EWMA (Exponentially Weighted Moving Average)** per stimare il tempo di caricamento di ogni istanza:
-
-- Alpha: `0.3`
-- Outlier detection: z-score
-- Attesa minima: `30 secondi`
-- La stima viene aggiornata ad ogni ciclo per ogni istanza
+- **EWMA** alpha=`0.3`
+- **Outlier detection** z-score
+- **Attesa minima:** `30 secondi`
+- Stima aggiornata ad ogni ciclo per istanza
 
 ---
 
@@ -161,13 +158,14 @@ Il bot usa **EWMA (Exponentially Weighted Moving Average)** per stimare il tempo
 
 ```
 C:\Bot-raccolta\V5\
-├── bot.log              # log principale
-├── status.json          # stato real-time per dashboard
-├── timing.json          # storico tempi di caricamento
+├── bot.log                          # log principale
+├── status.json                      # stato real-time per dashboard
+├── timing.json                      # storico tempi di caricamento
+├── rifornimento_stato_{nome}.json   # quota giornaliera per istanza
 └── debug\
     └── ciclo_NNN\
         ├── report_ciclo_NNN.html
-        └── *.png        # screenshot diagnostici
+        └── *.png                    # screenshot diagnostici
 ```
 
 ---
@@ -176,6 +174,8 @@ C:\Bot-raccolta\V5\
 
 Questo repository include un file `CONTEXT.md` usato per mantenere il contesto
 tra sessioni di sviluppo con Claude AI.
+
+A inizio sessione dire a Claude: **"leggi il contesto"**
 
 ---
 
@@ -192,6 +192,6 @@ tra sessioni di sviluppo con Claude AI.
 | V5.7 | rifornimento integrato nel flusso principale |
 | V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
 | V5.9 | Lettura reale post-MARCIA, blacklist rilasciata su errore, max 3 fallimenti consecutivi |
-
-V5.12.1 \
-Hotfix: definizione TTL blacklist + stati RESERVED/COMMITTED (COMMITTED=120s) \
+| V5.10 | OCR fail post-MARCIA: retry 3s; loop while invece di range fisso |
+| V5.11 | rifornimento.py rebuild: template matching badge/frecce/avatar |
+| V5.12 | rifornimento completo: coda volo, tassa OCR, quota giornaliera reset 01:00 UTC, flag abilitazione |

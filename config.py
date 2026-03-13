@@ -19,20 +19,22 @@ GAME_ACTIVITY  = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDK
 # truppe_raccolta: truppe per squadra (0 = MAX, None = usa TRUPPE_RACCOLTA globale)
 # max_squadre    : numero massimo raccoglitori da inviare (1-5, 0 = usa tutte le libere)
 ISTANZE = [
-    #["FAU_00", "Pie64_13", "5685", 0, 5],
-    #["FAU_01", "Pie64_6", "5615", 10000, 4],
-    #["FAU_02", "Pie64",   "5555", 10000, 4],
-    #["FAU_03", "Pie64_7", "5625", 10000, 4],
-    #["FAU_04", "Pie64_8", "5635", 10000, 4],
-    #["FAU_05", "Pie64_9", "5645", 10000, 4],
-    #["FAU_06", "Pie64_11", "5665", 10000, 4],
+    ["FAU_02", "Pie64",   "5555", 10000, 4],
+    ["FAU_01", "Pie64_6", "5615", 10000, 4],
+    ["FAU_03", "Pie64_7", "5625", 10000, 4],
+    ["FAU_04", "Pie64_8", "5635", 10000, 4],
+    ["FAU_05", "Pie64_9", "5645", 10000, 4],
     ["FAU_07", "Pie64_10", "5655", 10000, 4],
+    ["FAU_06", "Pie64_11", "5665", 10000, 4],
     ["FAU_08", "Pie64_12", "5675", 10000, 4],
+    ["FAU_00", "Pie64_13", "5685", 0, 5],
+    #["FAU_09", "Pie64_14", "5695", 10000, 3],
+    
 ]
 
 # --- Ciclo automatico ---
 ISTANZE_BLOCCO         = 1    # istanze attive contemporaneamente
-WAIT_MINUTI            = 5   # minuti di attesa tra un ciclo e l'altro
+WAIT_MINUTI            = 1   # minuti di attesa tra un ciclo e l'altro
 
 # --- Raccolta risorse ---
 TRUPPE_RACCOLTA        = 10000  # truppe per squadra globale (0 = MAX)
@@ -49,6 +51,7 @@ TAP_NODO            = (480, 280)
 TAP_RACCOGLI        = (230, 390)
 TAP_SQUADRA         = (700, 185)
 TAP_MARCIA          = (727, 476)
+TAP_TOGGLE_HOME_MAPPA = (38, 505)  # bottone in basso a sinistra: rifugio <-> mappa
 TAP_CANCELLA        = (527, 469)
 TAP_CAMPO_TESTO     = (748, 75)
 TAP_OK_TASTIERA     = (879, 487)
@@ -60,17 +63,15 @@ LIVELLO_RACCOLTA    = 6
 STATO_CHECK_X  = 40
 STATO_CHECK_Y  = 505
 STATO_SOGLIA_R = 160   # R<160=home, R>160=mappa, RGB<30=banner
+# --- Rilevamento stato (robusto) ---
+# Campiona più pixel attorno a STATO_CHECK_X/Y per ridurre falsi positivi dovuti a overlay/animazioni.
+STATO_CHECK_OFFSETS = [
+    (0, 0), (-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2)
+]
+STATO_MIN_MAPPA_RGB_SUM = 20  # somma RGB minima per considerare la mappa (evita banner/schermo nero)
 
 # --- Contatore squadre (OCR) ---
 OCR_ZONA = (855, 115, 945, 145)   # zona crop screenshot per OCR X/4
-# --- OCR tempo ETA (maschera "Marcia") ---
-# Base riferita a 960x540; la zona viene scalata automaticamente alle dimensioni reali dello screenshot.
-OCR_MARCIA_ETA_BASE_W = 960
-OCR_MARCIA_ETA_BASE_H = 540
-OCR_MARCIA_ETA_ZONA = (600, 400, 930, 510)
-OCR_MARCIA_ETA_MARGINE_S = 5   # margine (s) per attese basate su ETA
-OCR_MARCIA_ETA_MIN_S = 8       # minimo attesa (s) quando ETA disponibile
-OCR_MARCIA_ETA_DEBUG_SAVE = True  # salva crop ETA quando non leggibile (diagnostica)
 
 # --- Popup "Uscire dal gioco?" (rilevamento caricamento) ---
 POPUP_CHECK_X   = 480
@@ -112,13 +113,13 @@ MSG_LEGGI_X         = 95
 MSG_LEGGI_Y         = 510
 
 # --- Rifornimento alleanza ---
+RIFORNIMENTO_ABILITATO     = True    # False = disabilita senza toccare il codice
 RIFORNIMENTO_DESTINATARIO  = "FauMorfeus"
 RIFORNIMENTO_AVATAR        = "templates/avatar_faumorfeus.png"
 RIFORNIMENTO_BTN_TEMPLATE  = "templates/btn_risorse_approv.png"
-RIFORNIMENTO_SOGLIA_M      = 10.0
-RIFORNIMENTO_TASSA         = 0.24
-RIFORNIMENTO_QTA_POMODORO  = 500_000
-RIFORNIMENTO_QTA_LEGNO     = 500_000
+RIFORNIMENTO_SOGLIA_M      = 10.0   # non invia se deposito < 10M per risorsa
+RIFORNIMENTO_QTA_POMODORO  = 999_000_000
+RIFORNIMENTO_QTA_LEGNO     = 999_000_000
 RIFORNIMENTO_QTA_ACCIAIO   = 0
 RIFORNIMENTO_QTA_PETROLIO  = 0
 

@@ -28,6 +28,7 @@ import debug
 import log as _log
 import status as _status
 import config
+import rifornimento
 
 # Post-marcia: attesa base (ms->s) con limite
 DELAY_POSTMARCIA_BASE = config.DELAY_MARCIA / 1000
@@ -123,15 +124,14 @@ def _blacklist_reserve(blacklist, blacklist_lock, chiave_nodo):
         blacklist[chiave_nodo] = {"ts": time.time(), "state": "RESERVED"}
 
 
-def _blacklist_commit(blacklist, blacklist_lock, chiave_nodo, eta_s=None):
-    """Conferma un nodo in stato COMMITTED (TTL=BLACKLIST_COMMITTED_TTL).
-
-    eta_s: ETA di arrivo (secondi) letto dalla maschera Marcia. Può essere None.
-    """
+def _blacklist_commit(blacklist, blacklist_lock, chiave_nodo):
+    """Conferma un nodo in stato COMMITTED (TTL=BLACKLIST_COMMITTED_TTL)."""
     if blacklist is None or blacklist_lock is None or not chiave_nodo:
         return
     with blacklist_lock:
-        blacklist[chiave_nodo] = {"ts": time.time(), "state": "COMMITTED", "eta_s": eta_s}
+        blacklist[chiave_nodo] = {"ts": time.time(), "state": "COMMITTED"}
+
+
 def _blacklist_rollback(blacklist, blacklist_lock, chiave_nodo):
     """Rilascia un nodo dalla blacklist (rollback immediato)."""
     if blacklist is None or blacklist_lock is None or not chiave_nodo:
@@ -144,17 +144,6 @@ def _blacklist_get_state(blacklist, blacklist_lock, chiave_nodo):
     """Ritorna lo stato del nodo in blacklist: RESERVED/COMMITTED oppure None."""
     if blacklist is None or blacklist_lock is None or not chiave_nodo:
         return None
-
-
-def _blacklist_get_eta(blacklist, blacklist_lock, chiave_nodo):
-    """Ritorna eta_s (secondi) se presente per un nodo COMMITTED, altrimenti None."""
-    if blacklist is None or blacklist_lock is None or not chiave_nodo:
-        return None
-    with blacklist_lock:
-        v = blacklist.get(chiave_nodo)
-        if isinstance(v, dict):
-            return v.get('eta_s')
-    return None
     with blacklist_lock:
         v = blacklist.get(chiave_nodo)
     if isinstance(v, dict):
@@ -235,21 +224,24 @@ def _leggi_attive_con_retry(porta, nome, logger=None, n_letture=3, retry=3, slee
 # ------------------------------------------------------------------------------
 
 def _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger=None):
-    """Esegue la sequenza UI: RACCOGLI → SQUADRA → (truppe) → MARCIA.
+    """Esegue la sequenza di invio.
 
-    Ritorna (ok, eta_s):
-      - ok: True se la marcia è partita (schermata cambiata)
-      - eta_s: ETA letto dalla maschera pre-marcia (secondi) o None
+    Ritorna True se la sequenza ha verosimilmente portato a un invio (MARCIA ha cambiato schermata),
+    False se si resta bloccati (es. SQUADRA non apre, o MARCIA non chiude la maschera).
+
+    Nota importante per il tuo caso: la UI può *restare in mappa* anche quando apre la maschera/pannello.
+    Per questo usiamo un confronto screenshot prima/dopo sui tap critici.
     """
     def log(msg):
         if logger:
             logger(nome, msg)
 
-    eta_s = None
-
+    # 1) RACCOGLI
     adb.tap(porta, config.TAP_RACCOGLI)
     time.sleep(0.5)
 
+    # 2) SQUADRA (apertura maschera creazione squadra) - la UI può restare in mappa
+    # Confronto screenshot prima/dopo: se invariato, la maschera non si è aperta.
     screen_before_squadra = adb.screenshot(porta)
     before_hash = _md5_file(screen_before_squadra)
 
@@ -258,20 +250,6 @@ def _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger=None):
 
     screen_pre = adb.screenshot(porta)
     debug.salva_screen(screen_pre, nome, "pre_marcia", squadra, tentativo)
-
-    try:
-        eta_s, raw = ocr.leggi_eta_marcia(screen_pre)
-    except Exception:
-        eta_s, raw = None, ""
-
-    if eta_s is not None:
-        log(f"ETA marcia stimata: {eta_s}s")
-    else:
-        if tentativo == 1:
-            log("ETA marcia non leggibile")
-            if raw:
-                log(f"ETA OCR raw: '{raw[:40]}'")
-
     pre_hash = _md5_file(screen_pre)
 
     if before_hash and pre_hash and before_hash == pre_hash:
@@ -280,22 +258,12 @@ def _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger=None):
         time.sleep(1.8)
         screen_pre = adb.screenshot(porta)
         debug.salva_screen(screen_pre, nome, "pre_marcia_retry", squadra, tentativo)
-
-        try:
-            eta_s2, raw2 = ocr.leggi_eta_marcia(screen_pre)
-            if eta_s2 is not None:
-                eta_s = eta_s2
-                log(f"ETA marcia stimata (retry): {eta_s}s")
-            elif raw2 and tentativo == 1:
-                log(f"ETA OCR raw (retry): '{raw2[:40]}'")
-        except Exception:
-            pass
-
         pre_hash = _md5_file(screen_pre)
         if before_hash and pre_hash and before_hash == pre_hash:
             log("SQUADRA: ancora schermata invariata dopo retry - considero invio FALLITO")
-            return (False, eta_s)
+            return False
 
+    # 3) Imposta truppe se richiesto
     if n_truppe and n_truppe > 0:
         adb.tap(porta, config.TAP_CANCELLA)
         time.sleep(0.4)
@@ -310,9 +278,11 @@ def _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger=None):
         adb.tap(porta, config.TAP_OK_TASTIERA)
         time.sleep(0.25)
 
+    # 4) MARCIA
     adb.tap(porta, config.TAP_MARCIA)
     time.sleep(0.8)
 
+    # 5) Verifica che la UI sia cambiata: se identica spesso significa che siamo rimasti bloccati
     screen_post = adb.screenshot(porta)
     post_hash = _md5_file(screen_post)
 
@@ -324,13 +294,18 @@ def _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger=None):
         post_hash2 = _md5_file(screen_post2)
         if pre_hash and post_hash2 and pre_hash == post_hash2:
             log("MARCIA: ancora schermata invariata dopo retry - considero invio FALLITO")
-            return (False, eta_s)
+            return False
 
-    return (True, eta_s)
+    return True
+
+
+# ------------------------------------------------------------------------------
+# Invio squadra: cerca nodo + gestisci blacklist + invio
+# ------------------------------------------------------------------------------
+
 def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
                       logger=None, blacklist=None, blacklist_lock=None):
-    """Ritorna (chiave_nodo, nodo_bloccato, marcia_tentata, eta_s)."""
-
+    """Ritorna (chiave_nodo, nodo_bloccato, marcia_tentata)."""
     def log(msg):
         if logger:
             logger(nome, msg)
@@ -338,7 +313,6 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
     _cerca_nodo(porta, tipo)
     chiave_nodo, cx, cy, screen_nodo = _leggi_coord_nodo(porta, nome, tipo, squadra, tentativo, 1, logger)
 
-    # Coordinate non leggibili -> procedo senza blacklist
     if chiave_nodo is None:
         log("Coordinate nodo non leggibili - procedo senza blacklist")
         debug.salva_screen(screen_nodo, nome, "fase3_ocr_coord_fail", squadra, tentativo, "r1")
@@ -346,10 +320,9 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
         time.sleep(0.4)
         adb.tap(porta, config.TAP_NODO)
         time.sleep(0.6)
-        ok, _ = _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger)
-        return None, False, ok, None
+        ok = _esegui_marcia(porta, nome, n_truppe, squadra, tentativo, logger)
+        return None, False, ok
 
-    # Nodo in blacklist -> prova a cercarne un altro
     if _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo):
         log(f"Nodo ({cx},{cy}) in blacklist - riprovo CERCA")
         debug.salva_screen(screen_nodo, nome, "fase3_blacklist", squadra, tentativo, f"{cx}_{cy}_r1")
@@ -359,38 +332,28 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
         chiave_nodo, cx, cy, screen_nodo = _leggi_coord_nodo(porta, nome, tipo, squadra, tentativo, 2, logger)
 
         if chiave_nodo == chiave_primo or chiave_nodo is None:
-            log("Gioco ripropone stesso nodo - attesa dinamica")
+            log(f"Gioco ripropone stesso nodo - attendo {BLACKLIST_ATTESA_NODO}s (solo se nodo COMMITTED)")
             attesa = 3
             if _blacklist_get_state(blacklist, blacklist_lock, chiave_primo) == "COMMITTED":
-                eta_prev = _blacklist_get_eta(blacklist, blacklist_lock, chiave_primo)
-                if isinstance(eta_prev, (int, float)) and eta_prev > 0:
-                    marg = getattr(config, 'OCR_MARCIA_ETA_MARGINE_S', 5)
-                    att_min = getattr(config, 'OCR_MARCIA_ETA_MIN_S', 8)
-                    attesa = int(min(BLACKLIST_ATTESA_NODO, max(att_min, eta_prev + marg)))
-                    log(f"Attendo {attesa}s (ETA={int(eta_prev)}s + marg={int(marg)}s)")
-                else:
-                    attesa = BLACKLIST_ATTESA_NODO
-                    log(f"Attendo {attesa}s (ETA non disponibile)")
+                attesa = BLACKLIST_ATTESA_NODO
             time.sleep(attesa)
 
             _cerca_nodo(porta, tipo)
             chiave_nodo, cx, cy, screen_nodo = _leggi_coord_nodo(porta, nome, tipo, squadra, tentativo, 3, logger)
 
             if chiave_nodo == chiave_primo or chiave_nodo is None:
-                log(f"Nodo ({chiave_primo}) ancora bloccato dopo attesa - riproverò")
+                log(f"Nodo ({chiave_primo}) ancora bloccato dopo attesa - abbandono tipo {tipo}")
                 debug.salva_screen(screen_nodo, nome, "fase3_blacklist_bloccato", squadra, tentativo, chiave_primo)
                 adb.keyevent(porta, "KEYCODE_BACK")
                 time.sleep(0.4)
-                # Non blocco il tipo: fallimento "soft"
-                return None, False, False, None
+                return None, True, False
 
         if chiave_nodo and _blacklist_pulisci_e_verifica(blacklist, blacklist_lock, chiave_nodo):
-            log(f"Anche il nuovo nodo ({cx},{cy}) è in blacklist - riproverò")
+            log(f"Anche il nuovo nodo ({cx},{cy}) è in blacklist - abbandono")
             adb.keyevent(porta, "KEYCODE_BACK")
             time.sleep(0.4)
-            return None, False, False, None
+            return None, True, False
 
-    # Nodo libero
     log(f"[FASE4] Nodo ({cx},{cy}) libero - tap nodo")
     adb.tap(porta, config.TAP_NODO)
     time.sleep(0.7)
@@ -402,15 +365,21 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
     log(f"Nodo ({cx},{cy}) prenotato in blacklist (RESERVED)")
 
     for t in range(1, config.MAX_TENTATIVI_RACCOLTA + 1):
-        ok, eta_s = _esegui_marcia(porta, nome, n_truppe, squadra, t, logger)
+        ok = _esegui_marcia(porta, nome, n_truppe, squadra, t, logger)
         if ok:
-            return chiave_nodo, False, True, eta_s
+            return chiave_nodo, False, True
 
         log(f"MARCIA fallita (tentativo {t}/{config.MAX_TENTATIVI_RACCOLTA}) - recovery light")
         adb.keyevent(porta, "KEYCODE_BACK")
         time.sleep(0.8)
 
-    return chiave_nodo, False, False, None
+    return chiave_nodo, False, False
+
+
+# ------------------------------------------------------------------------------
+# Entry point: raccolta istanza
+# ------------------------------------------------------------------------------
+
 def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo=0,
                     blacklist=None, blacklist_lock=None):
     def log(msg):
@@ -427,6 +396,18 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
 
     import alleanza as _all
     _all.raccolta_alleanza(porta, nome, logger)
+
+    # --- INVIO RISORSE — eseguito in HOME prima di andare in mappa ---
+    try:
+        sped = rifornimento.esegui_rifornimento(
+            porta, nome,
+            logger=logger,
+            ciclo=ciclo,
+        )
+        if sped and sped > 0:
+            log(f"Rifornimento: {sped} spedizione/i effettuata/e")
+    except Exception as _e:
+        log(f"Rifornimento: errore non bloccante: {_e}")
 
     # Porta in mappa
     gia_in_mappa = stato.rileva(porta)[0] == "mappa"
@@ -453,6 +434,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
     acciaio = risorse.get("acciaio", -1)
     petrolio = risorse.get("petrolio", -1)
     _status.istanza_risorse(nome, pomodoro, legno, acciaio, petrolio)
+
 
     if pomodoro > 0 and legno > 0:
         diff = legno - pomodoro
@@ -508,6 +490,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         idx_seq += 1
 
         if tipo in tipi_bloccati:
+            log(f"Tipo '{tipo}' bloccato - skip")
             continue
 
         if fallimenti_cons >= MAX_FALLIMENTI:
@@ -517,19 +500,15 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         squadra_n = attive_correnti + 1
         log(f"Invio squadra (attive={attive_correnti}/{obiettivo}) -> {tipo} (fallimenti cons: {fallimenti_cons}/{MAX_FALLIMENTI})")
 
-        chiave_nodo, nodo_bloccato, marcia_tentata, eta_s = _tap_invia_squadra(
+        chiave_nodo, nodo_bloccato, marcia_tentata = _tap_invia_squadra(
             porta, tipo, n_truppe, nome, squadra_n, 1, ciclo,
             logger=logger, blacklist=blacklist, blacklist_lock=blacklist_lock
         )
 
         if nodo_bloccato:
-            log(f"Tipo '{tipo}' momentaneamente non disponibile (blacklist) - sblocco vincolo")
+            log(f"Tipo '{tipo}' bloccato da blacklist - squadre successive dello stesso tipo saltate")
+            tipi_bloccati.add(tipo)
             fallimenti_cons += 1
-            if len(set(sequenza)) == 1:
-                log("Fallback: alterno campo/segheria per riempire gli slot")
-                sequenza = ["campo", "segheria", "campo", "segheria", "campo"]
-                idx_seq = 0
-                tipi_bloccati.clear()
             continue
 
         if not marcia_tentata:
@@ -565,7 +544,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         if attive_dopo > attive_correnti:
             log(f"Squadra confermata ({attive_correnti} -> {attive_dopo})")
             if chiave_nodo:
-                _blacklist_commit(blacklist, blacklist_lock, chiave_nodo, eta_s=eta_s)
+                _blacklist_commit(blacklist, blacklist_lock, chiave_nodo)
                 log(f"Nodo {chiave_nodo} -> COMMITTED (TTL={BLACKLIST_COMMITTED_TTL}s)")
             attive_correnti = attive_dopo
             inviate += 1
@@ -579,7 +558,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
         if attive_dopo2 != -1 and attive_dopo2 > attive_correnti:
             log(f"Squadra confermata dopo retry ({attive_correnti} -> {attive_dopo2})")
             if chiave_nodo:
-                _blacklist_commit(blacklist, blacklist_lock, chiave_nodo, eta_s=eta_s)
+                _blacklist_commit(blacklist, blacklist_lock, chiave_nodo)
                 log(f"Nodo {chiave_nodo} -> COMMITTED (TTL={BLACKLIST_COMMITTED_TTL}s)")
             attive_correnti = attive_dopo2
             inviate += 1

@@ -29,22 +29,74 @@ MAX_TENTATIVI_MAPPA = 3  # dopo 3 tap falliti → ritorna False con certezza
 # Rileva stato corrente (senza screenshot: usa screen già scattato)
 # ------------------------------------------------------------------------------
 def rileva_screen(screen: str) -> str:
-    """Rileva stato da screen già scattato. Ritorna 'home'|'mappa'|'overlay'|'sconosciuto'."""
+    """Rileva stato da screen già scattato.
+
+    Stati possibili:
+      - 'home'
+      - 'mappa'
+      - 'overlay'
+      - 'sconosciuto'
+
+    Strategia:
+      1) Se è presente la popup "Uscire dal gioco?" -> 'overlay'
+      2) Altrimenti campiona più pixel attorno a STATO_CHECK_X/Y e decide per maggioranza.
+         In caso di pareggio, preferisce 'mappa' (riduce falsi 'overlay' durante transizioni in mappa).
+    """
     if not screen:
         return "sconosciuto"
-    r, g, b = adb.leggi_pixel(screen, config.STATO_CHECK_X, config.STATO_CHECK_Y)
-    if r == -1:
-        return "sconosciuto"
-    if r < config.STATO_SOGLIA_R:
-        return "home"
-    if r >= config.STATO_SOGLIA_R and (r + g + b) > 30:
-        return "mappa"
-    return "overlay"   # RGB < 30 = banner/schermo nero, o altro
 
-# ------------------------------------------------------------------------------
-# Rileva stato corrente (scatta screenshot)
-# Ritorna (stato, screen_path)
-# ------------------------------------------------------------------------------
+    def _px(x: int, y: int):
+        return adb.leggi_pixel(screen, x, y)
+
+    # 1) Riconoscimento popup "Uscire dal gioco?" (overlay)
+    r0, g0, b0 = _px(config.POPUP_CHECK_X, config.POPUP_CHECK_Y)
+    if r0 != -1:
+        is_beige = (config.BEIGE_R_MIN <= r0 <= config.BEIGE_R_MAX and
+                    config.BEIGE_G_MIN <= g0 <= config.BEIGE_G_MAX and
+                    config.BEIGE_B_MIN <= b0 <= config.BEIGE_B_MAX)
+        rok, gok, bok = _px(config.POPUP_OK_X, config.POPUP_OK_Y)
+        is_ok_yellow = (rok != -1 and
+                        config.POPUP_OK_R_MIN <= rok <= config.POPUP_OK_R_MAX and
+                        config.POPUP_OK_G_MIN <= gok <= config.POPUP_OK_G_MAX and
+                        config.POPUP_OK_B_MIN <= bok <= config.POPUP_OK_B_MAX)
+        if is_beige and is_ok_yellow:
+            return "overlay"
+
+    # 2) Home/Mappa (campionamento multiplo)
+    offsets = getattr(config, 'STATO_CHECK_OFFSETS', [(0, 0)])
+    soglia_r = config.STATO_SOGLIA_R
+    min_sum = getattr(config, 'STATO_MIN_MAPPA_RGB_SUM', 20)
+
+    home_votes = 0
+    mappa_votes = 0
+    valid = 0
+
+    for dx, dy in offsets:
+        r, g, b = _px(config.STATO_CHECK_X + dx, config.STATO_CHECK_Y + dy)
+        if r == -1:
+            continue
+        valid += 1
+
+        # Banner/schermo nero/overlay scuro
+        if (r + g + b) < min_sum:
+            continue
+
+        if r < soglia_r:
+            home_votes += 1
+        else:
+            mappa_votes += 1
+
+    if valid == 0:
+        return "sconosciuto"
+
+    if home_votes > mappa_votes and home_votes > 0:
+        return "home"
+
+    # Tie-break verso mappa: se abbiamo almeno un voto mappa e non prevale home, assumiamo mappa.
+    if mappa_votes >= home_votes and mappa_votes > 0:
+        return "mappa"
+
+    return "overlay"
 def rileva(porta: str) -> tuple:
     """Scatta screenshot e rileva stato. Ritorna (stato, screen_path)."""
     screen = adb.screenshot(porta)
@@ -69,6 +121,15 @@ def back_rapidi_e_stato(porta: str, n: int = N_BACK, logger=None, nome: str = ""
     time.sleep(DELAY_POST_BACK)
 
     s, screen = rileva(porta)
+    # Se dopo i BACK risultiamo in overlay, prova a chiuderlo con un BACK singolo e rileggi.
+    # Questo riduce i casi in cui il BACK apre la popup di uscita e ci lascia in overlay.
+    if s == "overlay":
+        adb.keyevent(porta, "KEYCODE_BACK")
+        time.sleep(0.8)
+        s2, screen2 = rileva(porta)
+        if s2 in ("home", "mappa"):
+            s, screen = s2, screen2
+
     log(f"Stato dopo {n} BACK: {s}")
     return (s, screen)
 
@@ -129,7 +190,7 @@ def vai_in_mappa(porta: str, nome: str, logger=None) -> bool:
         delay = delays_post_tap[min(tentativo, len(delays_post_tap) - 1)]
         label = "primo" if tentativo == 0 else f"tentativo {tentativo + 1}"
         log(f"Tap mappa ({label}, attesa {delay:.0f}s)...")
-        adb.tap(porta, (38, 505), delay_ms=0)
+        adb.tap(porta, getattr(config, "TAP_TOGGLE_HOME_MAPPA", (38, 505)), delay_ms=0)
         time.sleep(delay)
 
         s_dopo, _ = rileva(porta)
@@ -182,8 +243,13 @@ def vai_in_home(porta: str, nome: str, logger=None, conferme: int = 3) -> bool:
 
     # Se in mappa o home, usa BACK per tornare in home
     if s != "home":
-        adb.keyevent(porta, "KEYCODE_BACK")
-        time.sleep(2.0)
+        if s == "mappa":
+            # In mappa il BACK apre spesso la popup di uscita: usa il toggle rifugio<->mappa
+            adb.tap(porta, getattr(config, "TAP_TOGGLE_HOME_MAPPA", (38, 505)), delay_ms=0)
+            time.sleep(3.0)
+        else:
+            adb.keyevent(porta, "KEYCODE_BACK")
+            time.sleep(2.0)
 
     # Verifica N conferme consecutive di home
     consecutive = 0
@@ -197,9 +263,9 @@ def vai_in_home(porta: str, nome: str, logger=None, conferme: int = 3) -> bool:
             time.sleep(0.5)
         elif s in ("mappa",):
             consecutive = 0
-            log(f"Stato {s} - BACK")
-            adb.keyevent(porta, "KEYCODE_BACK")
-            time.sleep(2.0)
+            log(f"Stato {s} - toggle verso home")
+            adb.tap(porta, getattr(config, "TAP_TOGGLE_HOME_MAPPA", (38, 505)), delay_ms=0)
+            time.sleep(3.0)
         else:
             # Overlay ricomparso
             consecutive = 0
