@@ -96,7 +96,7 @@ messaggi (se >12h) → alleanza (se >12h) → rifornimento (HOME) → vai_in_map
 | Pomodoro | (463, 2, 525, 24) | Solo testo, icona esclusa |
 | Legno | (562, 2, 625, 24) | Solo testo, icona esclusa |
 | Acciaio | (658, 2, 715, 24) | Solo testo, icona esclusa |
-| Petrolio | (748, 2, 802, 24) | Solo testo, icona esclusa |
+| Petrolio | (753, 2, 822, 24) | Solo testo, allargata per valori come 732.0K |
 | Diamanti | (857, 2, 925, 24) | Intero, parser dedicato `_parse_diamanti()` |
 
 > Tutti taglio_sx=0. Calibrate su screenshot reali 960x540 (4 istanze verificate).
@@ -117,6 +117,25 @@ messaggi (se >12h) → alleanza (se >12h) → rifornimento (HOME) → vai_in_map
 | `TAP_LENTE_COORD` | (380, 18) |
 | Zona OCR X | (430, 125, 530, 155) |
 | Zona OCR Y | (535, 125, 635, 155) |
+
+### Layout barra inferiore
+| Campo ISTANZE | Indice | Valori |
+|---------------|--------|--------|
+| layout_barra  | [5]    | 1 = standard 5 icone (Alleanza x=760) — default |
+|               |        | 2 = compatto 4 icone (Alleanza x=800) — FAU_09 |
+
+```python
+COORD_ALLEANZA_LAYOUT = { 1: (760, 505), 2: (800, 505) }
+config.get_coord_alleanza(ist)  # ritorna coordinata corretta per layout
+```
+> Per aggiungere un nuovo layout: aggiungere voce in `COORD_ALLEANZA_LAYOUT` e impostare il numero nel campo [5] dell'istanza.
+
+### Account destinatario rifornimento
+```python
+DOOMS_ACCOUNT = "FauMorfeus"   # era RIFORNIMENTO_DESTINATARIO
+DOOMS_AVATAR  = "templates/avatar_faumorfeus.png"  # era RIFORNIMENTO_AVATAR
+```
+> La dashboard legge `data.dooms_account` dal JSON e aggiorna automaticamente tutte le label.
 
 ### rifornimento.py
 | Costante | Valore |
@@ -265,7 +284,7 @@ python dashboard_server.py
 | V5.13 | Blacklist transazionale RESERVED/COMMITTED |
 | V5.13.1 | Fix SQUADRA hash check |
 | V5.13.2 | ETA marcia OCR + attesa dinamica blacklist |
-| V5.14 | OCR completo (acciaio+petrolio+diamanti), produzione inter-ciclo, schedulazione 12h messaggi/alleanza, dashboard dati storici+badge storico+diamanti+inviato aggregato, delta rifornimento OCR reale |
+| V5.14 | OCR completo deposito (zone calibrate su 6 account, petrolio corretto a 753,2,822,24), produzione inter-ciclo, schedulazione 12h messaggi/alleanza, dashboard dati storici+badge storico+diamanti+inviato aggregato, delta rifornimento OCR reale, layout barra per istanza (COORD_ALLEANZA_LAYOUT), DOOMS_ACCOUNT/DOOMS_AVATAR, percorsi automatici BOT_DIR+_trova_exe |
 
 ---
 
@@ -278,4 +297,4 @@ web_fetch → https://raw.githubusercontent.com/faustodba/doomsday-bot/main/CONT
 
 ---
 
-*Ultimo aggiornamento: 2026-03-14*
+*Ultimo aggiornamento: 2026-03-14 (sessione serale)*

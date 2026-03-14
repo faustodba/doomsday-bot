@@ -30,7 +30,6 @@ import stato
 import debug
 import config
 import log as _log
-import status as _status
 
 # ------------------------------------------------------------------------------
 # Coordinate navigazione (risoluzione 960x540)
@@ -813,12 +812,12 @@ def _naviga_a_maschera(porta: str, logger=None, nome: str = "") -> bool:
     def log(msg):
         if logger: logger(nome, f"[RIF] {msg}")
 
-    template_avatar = getattr(config, "RIFORNIMENTO_AVATAR", "")
+    template_avatar = getattr(config, "DOOMS_AVATAR", "")
     if not template_avatar or not os.path.exists(template_avatar):
         log(f"ERRORE: template avatar non trovato: {template_avatar}")
         return False
 
-    nome_dest = getattr(config, "RIFORNIMENTO_DESTINATARIO", "")
+    nome_dest = getattr(config, "DOOMS_ACCOUNT", "")
 
     # 1. Apri Alleanza → Membri
     log("Tap Alleanza")
@@ -971,10 +970,10 @@ def esegui_rifornimento(porta: str, nome: str,
     if _controlla_reset(nome, porta, logger):
         return 0
 
-    nome_rifugio = getattr(config, "RIFORNIMENTO_DESTINATARIO", "")
+    nome_rifugio = getattr(config, "DOOMS_ACCOUNT", "")
     soglia       = getattr(config, "RIFORNIMENTO_SOGLIA_M", SOGLIA_MIN_M)
     if not nome_rifugio:
-        log("RIFORNIMENTO_DESTINATARIO non configurato - skip")
+        log("DOOMS_ACCOUNT non configurato - skip")
         return 0
 
     # Quantità per spedizione da config (con fallback a default)
@@ -1117,27 +1116,6 @@ def esegui_rifornimento(porta: str, nome: str,
         stato.vai_in_home(porta, nome, logger)
         time.sleep(3.0)
 
-        # 7. Lettura OCR post-invio — calcola delta reale risorse uscite dal deposito
-        #    risorse_reali = snapshot PRE (letto al passo 2 sopra, ancora valido)
-        #    risorse_post  = lettura DOPO il ritorno in home
-        try:
-            screen_post = adb.screenshot(porta)
-            risorse_post = ocr.leggi_risorse(screen_post) if screen_post else {}
-            if all(risorse_post.get(r, -1) < 0 for r in ("pomodoro", "legno")):
-                time.sleep(2.0)
-                screen_post = adb.screenshot(porta)
-                risorse_post = ocr.leggi_risorse(screen_post) if screen_post else {}
-            _status.istanza_rifornimento(
-                nome,
-                risorse_reali.get("pomodoro", -1), risorse_reali.get("legno",    -1),
-                risorse_reali.get("acciaio",  -1), risorse_reali.get("petrolio", -1),
-                risorse_post.get("pomodoro",  -1), risorse_post.get("legno",     -1),
-                risorse_post.get("acciaio",   -1), risorse_post.get("petrolio",  -1),
-            )
-            log("Delta rifornimento registrato in status")
-        except Exception as _e:
-            log(f"Registrazione delta rifornimento fallita (non bloccante): {_e}")
-
     log(f"Rifornimento completato: {spedizioni} spedizioni totali")
     return spedizioni
 
@@ -1194,7 +1172,7 @@ def test_step2_find_avatar(porta: str, nome: str, logger=None, max_swipe: int = 
         if logger:
             logger(nome, f"[RIF][S2] {msg}")
 
-    template_avatar = getattr(config, 'RIFORNIMENTO_AVATAR', '')
+    template_avatar = getattr(config, 'DOOMS_AVATAR', '')
     if not template_avatar or not os.path.exists(template_avatar):
         log(f"Template avatar mancante: {template_avatar}")
         return False
@@ -1246,7 +1224,7 @@ def test_step3_open_supply_mask(porta: str, nome: str, logger=None) -> bool:
         if logger:
             logger(nome, f"[RIF][S3] {msg}")
 
-    nome_dest = getattr(config, "RIFORNIMENTO_DESTINATARIO", "FauMorfeus")
+    nome_dest = getattr(config, "DOOMS_ACCOUNT", "")
 
     log("Start: apertura maschera Risorse di approvvigionamento")
 

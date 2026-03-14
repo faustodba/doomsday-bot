@@ -40,7 +40,7 @@ RIVENDICA_CLICK = 10
 # ------------------------------------------------------------------------------
 # Raccolta ricompense Alleanza
 # ------------------------------------------------------------------------------
-def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
+def raccolta_alleanza(porta: str, nome: str, logger=None, ist: list = None) -> bool:
     """
     Raccoglie le ricompense dalla sezione Alleanza -> Dono.
     Salta silenziosamente se già eseguito nelle ultime SCHEDULE_ORE_ALLEANZA ore.
@@ -49,6 +49,7 @@ def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
         porta:   porta ADB dell'istanza (es. "5555")
         nome:    nome istanza per il log (es. "FAU_00")
         logger:  callable(nome, msg) oppure None
+        ist:     elemento di config.ISTANZE — usato per leggere il layout barra
 
     Returns:
         True  se completato senza errori o saltato per schedulazione
@@ -61,12 +62,16 @@ def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
     if not scheduler.deve_eseguire(nome, porta, "alleanza", logger):
         return True
 
+    # Coordinate pulsante Alleanza: dipende dal layout barra dell'istanza
+    coord_alleanza = config.get_coord_alleanza(ist) if ist else COORD_ALLEANZA
+    log(f"Alleanza: layout barra {ist[5] if ist and len(ist)>5 else 1} → tap {coord_alleanza}")
+
     try:
         log("Inizio raccolta ricompense Alleanza")
 
         # 1. Apri menu Alleanza
         log("Alleanza: tap pulsante Alleanza")
-        adb.tap(porta, COORD_ALLEANZA)
+        adb.tap(porta, coord_alleanza)
         time.sleep(1.5)
 
         # 2. Apri sezione Dono (apre direttamente su Ricompense del negozio)

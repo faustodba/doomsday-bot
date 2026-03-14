@@ -124,7 +124,8 @@ def esegui_ciclo_pool(istanze: list, ciclo: int) -> tuple:
         return raccolta.raccolta_istanza(porta, nome, truppe, max_sq, log.logger,
                                          ciclo=_ciclo_corrente,
                                          blacklist=_blacklist_nodi,
-                                         blacklist_lock=_blacklist_nodi_lock)
+                                         blacklist_lock=_blacklist_nodi_lock,
+                                         ist=ist)
 
     def worker(ist):
         nome    = ist[0]

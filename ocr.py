@@ -188,7 +188,7 @@ ZONE_RISORSE = {
     "pomodoro": {"zona": (463, 2, 525, 24), "taglio": 0},
     "legno":    {"zona": (562, 2, 625, 24), "taglio": 0},
     "acciaio":  {"zona": (658, 2, 715, 24), "taglio": 0},
-    "petrolio": {"zona": (748, 2, 802, 24), "taglio": 0},
+    "petrolio": {"zona": (753, 2, 822, 24), "taglio": 0},  # allargata: cattura valori come 732.0K
     "diamanti": {"zona": (857, 2, 925, 24), "taglio": 0},
 }
 

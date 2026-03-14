@@ -6,7 +6,7 @@
 #    - avvio/completamento istanza
 #    - invio squadra
 #    - lettura risorse deposito (inizio e fine ciclo)
-#    - rifornimento inviato a FauMorfeus (delta reale pre/post invio)
+#    - rifornimento inviato a account destinatario (delta reale pre/post invio)
 #    - countdown prossimo ciclo
 #
 #  La dashboard.html legge questo file ogni 3s via fetch().
@@ -28,6 +28,13 @@ _path = os.path.join(config.BOT_DIR, "status.json")
 
 _RES_KEYS = ("pomodoro", "legno", "acciaio", "petrolio")
 
+# Nome account destinatario rifornimento — letto da config e scritto in status.json
+# La dashboard lo legge per mostrare il nome corretto nelle label
+try:
+    _dooms_account = getattr(config, "DOOMS_ACCOUNT", "destinatario")
+except Exception:
+    _dooms_account = "destinatario"
+
 # Stato in memoria — aggiornato dai vari moduli, scritto su disco atomicamente
 # Al primo import: se status.json esiste su disco lo carichiamo per preservare
 # i dati dell ultimo ciclo anche dopo un riavvio del bot.
@@ -39,6 +46,7 @@ def _carica_stato_iniziale() -> dict:
         "ts_aggiornato": "",
         "istanze":       {},
         "storico_cicli": [],
+        "dooms_account": _dooms_account,
     }
     try:
         if os.path.exists(_path):
@@ -52,6 +60,7 @@ def _carica_stato_iniziale() -> dict:
                     ist["ts_ultimo_ciclo"]  = dati.get("ts_aggiornato", "")
             dati["stato"]       = "idle"
             dati["countdown_s"] = 0
+            dati["dooms_account"] = _dooms_account  # aggiorna sempre da config
             return {**default, **dati}
     except Exception:
         pass
@@ -114,7 +123,7 @@ def _calcola_produzione(ist: dict) -> dict:
 
     - res_inizio_corrente  : lettura deposito all avvio del ciclo N+1
     - res_inizio_ciclo_prec: lettura deposito all avvio del ciclo N
-    - res_inviato_prec     : risorse inviate a FauMorfeus durante il ciclo N
+    - res_inviato_prec     : risorse inviate a account destinatario durante il ciclo N
 
     Il delta cattura tutto quello che e entrato nel deposito tra i due cicli.
     res_inviato_prec compensa quello che e uscito per il rifornimento.
@@ -152,9 +161,9 @@ def _istanza_default(nome: str) -> dict:
         "res_inizio_ciclo_prec": _res_vuote(),
         # Snapshot fine ciclo (mantenuto per compatibilità)
         "res_fine":              _res_vuote(),
-        # Risorse inviate a FauMorfeus nel ciclo CORRENTE (si accumula durante il ciclo)
+        # Risorse inviate a account destinatario nel ciclo CORRENTE (si accumula durante il ciclo)
         "res_inviato":           _res_vuote(),
-        # Risorse inviate a FauMorfeus nel ciclo PRECEDENTE (conservato da init_ciclo())
+        # Risorse inviate a account destinatario nel ciclo PRECEDENTE (conservato da init_ciclo())
         "res_inviato_prec":      _res_vuote(),
         # Produzione netta = (res_inizio_corrente - res_inizio_prec) + res_inviato_prec
         # Calcolata in istanza_risorse_inizio() quando entrambi i punti sono disponibili
@@ -373,7 +382,7 @@ def istanza_rifornimento(nome: str,
                           pomodoro_post: float, legno_post: float,
                           acciaio_post: float,  petrolio_post: float):
     """
-    Registra le risorse inviate a FauMorfeus in un singolo invio.
+    Registra le risorse inviate a account destinatario in un singolo invio.
     Chiamare da rifornimento.py dopo aver letto il deposito PRE e POST invio VAI.
 
     Il delta (pre - post) viene accumulato in res_inviato per il ciclo corrente.
@@ -463,7 +472,7 @@ def istanza_cnt_errato(nome: str):
 def ciclo_completato(ciclo: int, squadre: int, durata_s: int):
     """
     Aggiunge voce allo storico cicli (max 20).
-    Include produzione aggregata e totale inviato a FauMorfeus per il ciclo.
+    Include produzione aggregata e totale inviato a account destinatario per il ciclo.
     """
     with _lock:
         prod_agg    = _res_vuote()

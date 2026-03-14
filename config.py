@@ -3,33 +3,89 @@
 #  Parametri globali di configurazione
 # ==============================================================================
 
+import os as _os
+
 # --- Percorsi ---
-#BOT_DIR        = r"E:\Bot-raccolta\V5"
-BOT_DIR        = r"C:\Bot-raccolta\V5"
-BS_EXE         = r"C:\Program Files\BlueStacks_nxt\HD-Player.exe"
-BS_ADB         = r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe"
-BS_HIDE_WINDOW = False   # True = nasconde finestra HD-Player dopo avvio (richiede pywin32)
-MUMU_ADB       = r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe"
-ADB_EXE        = BS_ADB  # default BlueStacks, main.py lo sovrascrive a runtime
-TESSERACT_EXE  = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-GAME_ACTIVITY  = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDKMainActivity"
+# BOT_DIR si calcola automaticamente dalla posizione di config.py
+# Il bot funziona in qualsiasi cartella senza modifiche
+BOT_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
+def _trova_exe(*candidati):
+    for p in candidati:
+        if _os.path.isfile(p):
+            return p
+    return ""
+
+BS_EXE = _trova_exe(
+    r"C:\Program Files\BlueStacks_nxt\HD-Player.exe",
+    r"C:\Program Files (x86)\BlueStacks_nxt\HD-Player.exe",
+    r"D:\Program Files\BlueStacks_nxt\HD-Player.exe",
+    r"E:\Program Files\BlueStacks_nxt\HD-Player.exe",
+)
+BS_ADB = _trova_exe(
+    r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
+    r"C:\Program Files (x86)\BlueStacks_nxt\HD-Adb.exe",
+    r"D:\Program Files\BlueStacks_nxt\HD-Adb.exe",
+    r"E:\Program Files\BlueStacks_nxt\HD-Adb.exe",
+)
+BS_HIDE_WINDOW = False  # True = nasconde finestra HD-Player (richiede pywin32)
+
+MUMU_ADB = _trova_exe(
+    r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
+    r"C:\Program Files (x86)\Netease\MuMuPlayer\nx_main\adb.exe",
+    r"D:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
+)
+
+ADB_EXE = BS_ADB  # default BlueStacks, main.py lo sovrascrive a runtime
+
+TESSERACT_EXE = _trova_exe(
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    r"D:\Program Files\Tesseract-OCR\tesseract.exe",
+)
+
+GAME_ACTIVITY = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDKMainActivity"
+
+# --- Verifica percorsi all'avvio ---
+def _verifica_percorsi():
+    print(f"[CONFIG] BOT_DIR      = {BOT_DIR}")
+    critici   = {"BS_EXE": BS_EXE, "BS_ADB": BS_ADB, "TESSERACT_EXE": TESSERACT_EXE}
+    opzionali = {"MUMU_ADB": MUMU_ADB}
+    tutti_ok  = True
+    for nome, val in critici.items():
+        if val:
+            print(f"[CONFIG] {nome:<16} = {val}")
+        else:
+            print(f"[CONFIG] *** ATTENZIONE: {nome} non trovato automaticamente")
+            print(f"[CONFIG]     Impostalo manualmente in config.py")
+            tutti_ok = False
+    for nome, val in opzionali.items():
+        stato = val if val else "(non trovato — serve solo per MuMuPlayer)"
+        print(f"[CONFIG] {nome:<16} = {stato}")
+    if tutti_ok:
+        print("[CONFIG] Tutti i percorsi critici rilevati automaticamente.")
+
+_verifica_percorsi()
 
 # --- Istanze ---
 # [nome_finestra, nome_interno_BS, porta_adb, truppe_raccolta, max_squadre]
 # truppe_raccolta: truppe per squadra (0 = MAX, None = usa TRUPPE_RACCOLTA globale)
 # max_squadre    : numero massimo raccoglitori da inviare (1-5, 0 = usa tutte le libere)
+# [nome, interno_BS, porta_adb, truppe_raccolta, max_squadre, layout_barra]
+# layout_barra: 1 = standard (5 icone: Campagna/Zaino/Alleanza/Bestia/Eroe)
+#               2 = compatto (4 icone: Campagna/Zaino/Alleanza/Eroe — no Bestia)
+# Se omesso: default 1
 ISTANZE = [
-    ["FAU_00", "Pie64_13", "5685", 0, 5],
-    ["FAU_01", "Pie64_6", "5615", 12000, 4],
-    ["FAU_02", "Pie64",   "5555", 12000, 4],
-    ["FAU_03", "Pie64_7", "5625", 12000, 4],
-    ["FAU_04", "Pie64_8", "5635", 12000, 4],
-    ["FAU_05", "Pie64_9", "5645", 12000, 4],
-    ["FAU_06", "Pie64_11", "5665", 12000, 4],
-    ["FAU_07", "Pie64_10", "5655", 12000, 4],
-    ["FAU_08", "Pie64_12", "5675", 12000, 4],
-    ["FAU_09", "Pie64_14", "5695", 10000, 3],
-    
+    ["FAU_02", "Pie64",    "5555", 12000, 4, 1],
+    ["FAU_01", "Pie64_6",  "5615", 12000, 4, 1],
+    ["FAU_03", "Pie64_7",  "5625", 12000, 4, 1],
+    ["FAU_04", "Pie64_8",  "5635", 12000, 4, 1],
+    ["FAU_05", "Pie64_9",  "5645", 12000, 4, 1],
+    ["FAU_07", "Pie64_10", "5655", 12000, 4, 1],
+    ["FAU_06", "Pie64_11", "5665", 12000, 4, 1],
+    ["FAU_08", "Pie64_12", "5675", 12000, 4, 1],
+    ["FAU_00", "Pie64_13", "5685", 0,     5, 1],
+    ["FAU_09", "Pie64_14", "5695", 12000, 3, 2],  # layout 2: 4 icone, no Bestia
 ]
 
 # --- Ciclo automatico ---
@@ -37,8 +93,24 @@ ISTANZE_BLOCCO         = 1    # istanze attive contemporaneamente
 WAIT_MINUTI            = 1   # minuti di attesa tra un ciclo e l'altro
 
 # --- Raccolta risorse ---
-TRUPPE_RACCOLTA        = 12000  # truppe per squadra globale (0 = MAX)
+TRUPPE_RACCOLTA        = 10000  # truppe per squadra globale (0 = MAX)
 MAX_TENTATIVI_RACCOLTA = 2      # tentativi massimi per singola squadra
+
+# --- Layout barra inferiore ---
+# Coordinate pulsante Alleanza per ogni layout (campo 6 di ISTANZE)
+# Layout 1: barra standard con 5 icone (Campagna/Zaino/Alleanza/Bestia/Eroe)
+# Layout 2: barra compatta con 4 icone (Campagna/Zaino/Alleanza/Eroe) — account senza Bestia
+COORD_ALLEANZA_LAYOUT = {
+    1: (760, 505),   # standard — 5 icone
+    2: (800, 505),   # compatto — 4 icone (FAU_09)
+}
+
+def get_coord_alleanza(ist: list) -> tuple:
+    """Ritorna coordinate pulsante Alleanza per l'istanza data.
+    ist: elemento di ISTANZE (lista con 5 o 6 campi).
+    """
+    layout = ist[5] if len(ist) > 5 else 1
+    return COORD_ALLEANZA_LAYOUT.get(layout, COORD_ALLEANZA_LAYOUT[1])
 
 # --- Coordinate tap (risoluzione 960x540) ---
 TAP_LENTE           = (38,  325)
@@ -130,8 +202,8 @@ SCHEDULE_ORE_ALLEANZA  = 12   # raccolta ricompense alleanza
 
 # --- Rifornimento alleanza ---
 RIFORNIMENTO_ABILITATO     = True    # False = disabilita senza toccare il codice
-RIFORNIMENTO_DESTINATARIO  = "FauMorfeus"
-RIFORNIMENTO_AVATAR        = "templates/avatar_faumorfeus.png"
+DOOMS_ACCOUNT              = "FauMorfeus"     # Nome account destinatario rifornimento
+DOOMS_AVATAR               = "templates/avatar_faumorfeus.png"  # Avatar destinatario
 RIFORNIMENTO_BTN_TEMPLATE  = "templates/btn_risorse_approv.png"
 RIFORNIMENTO_SOGLIA_M      = 5.0   # non invia se deposito < 10M per risorsa
 RIFORNIMENTO_QTA_POMODORO  = 999_000_000
@@ -140,7 +212,11 @@ RIFORNIMENTO_QTA_ACCIAIO   = 0
 RIFORNIMENTO_QTA_PETROLIO  = 0
 
 # --- MuMuPlayer ---
-MUMU_MANAGER = r"C:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe"
+MUMU_MANAGER = _trova_exe(
+    r"C:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe",
+    r"C:\Program Files (x86)\Netease\MuMuPlayer\nx_main\MuMuManager.exe",
+    r"D:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe",
+)
 
 ISTANZE_MUMU = [
     ["FAU_02", "0", 16384],

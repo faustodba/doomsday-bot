@@ -426,7 +426,7 @@ def _tap_invia_squadra(porta, tipo, n_truppe, nome, squadra, tentativo, ciclo,
 # ------------------------------------------------------------------------------
 
 def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo=0,
-                    blacklist=None, blacklist_lock=None):
+                    blacklist=None, blacklist_lock=None, ist=None):
     def log(msg):
         if logger:
             logger(nome, msg)
@@ -440,7 +440,7 @@ def raccolta_istanza(porta, nome, truppe=None, max_squadre=0, logger=None, ciclo
     _msg.raccolta_messaggi(porta, nome, logger)
 
     import alleanza as _all
-    _all.raccolta_alleanza(porta, nome, logger)
+    _all.raccolta_alleanza(porta, nome, logger, ist=ist)
 
     # --- INVIO RISORSE — eseguito in HOME prima di andare in mappa ---
     try:
