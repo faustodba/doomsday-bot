@@ -19,16 +19,16 @@ GAME_ACTIVITY  = "com.igg.android.doomsdaylastsurvivors/com.gpc.sdk.unity.GPCSDK
 # truppe_raccolta: truppe per squadra (0 = MAX, None = usa TRUPPE_RACCOLTA globale)
 # max_squadre    : numero massimo raccoglitori da inviare (1-5, 0 = usa tutte le libere)
 ISTANZE = [
-    ["FAU_02", "Pie64",   "5555", 10000, 4],
-    ["FAU_01", "Pie64_6", "5615", 10000, 4],
-    ["FAU_03", "Pie64_7", "5625", 10000, 4],
-    ["FAU_04", "Pie64_8", "5635", 10000, 4],
-    ["FAU_05", "Pie64_9", "5645", 10000, 4],
-    ["FAU_07", "Pie64_10", "5655", 10000, 4],
-    ["FAU_06", "Pie64_11", "5665", 10000, 4],
-    ["FAU_08", "Pie64_12", "5675", 10000, 4],
     ["FAU_00", "Pie64_13", "5685", 0, 5],
-    #["FAU_09", "Pie64_14", "5695", 10000, 3],
+    ["FAU_01", "Pie64_6", "5615", 12000, 4],
+    ["FAU_02", "Pie64",   "5555", 12000, 4],
+    ["FAU_03", "Pie64_7", "5625", 12000, 4],
+    ["FAU_04", "Pie64_8", "5635", 12000, 4],
+    ["FAU_05", "Pie64_9", "5645", 12000, 4],
+    ["FAU_06", "Pie64_11", "5665", 12000, 4],
+    ["FAU_07", "Pie64_10", "5655", 12000, 4],
+    ["FAU_08", "Pie64_12", "5675", 12000, 4],
+    ["FAU_09", "Pie64_14", "5695", 10000, 3],
     
 ]
 
@@ -37,7 +37,7 @@ ISTANZE_BLOCCO         = 1    # istanze attive contemporaneamente
 WAIT_MINUTI            = 1   # minuti di attesa tra un ciclo e l'altro
 
 # --- Raccolta risorse ---
-TRUPPE_RACCOLTA        = 10000  # truppe per squadra globale (0 = MAX)
+TRUPPE_RACCOLTA        = 12000  # truppe per squadra globale (0 = MAX)
 MAX_TENTATIVI_RACCOLTA = 2      # tentativi massimi per singola squadra
 
 # --- Coordinate tap (risoluzione 960x540) ---
@@ -72,6 +72,16 @@ STATO_MIN_MAPPA_RGB_SUM = 20  # somma RGB minima per considerare la mappa (evita
 
 # --- Contatore squadre (OCR) ---
 OCR_ZONA = (855, 115, 945, 145)   # zona crop screenshot per OCR X/4
+
+# --- OCR ETA Marcia ---
+# Zona con l'icona orologio + tempo percorrenza nella maschera "crea squadra"
+# Calibrata su screenshot reali 960x540: testo "0:01:18" leggibile e verificato
+OCR_MARCIA_ETA_ZONA       = (650, 440, 790, 465)
+OCR_MARCIA_ETA_BASE_W     = 960
+OCR_MARCIA_ETA_BASE_H     = 540
+OCR_MARCIA_ETA_DEBUG_SAVE = False  # True = salva crop falliti in debug_eta/ per ri-calibrazione
+OCR_MARCIA_ETA_MARGINE_S  = 5     # secondi extra attesa dopo ETA reale
+OCR_MARCIA_ETA_MIN_S      = 8     # attesa minima anche se ETA è molto bassa
 
 # --- Popup "Uscire dal gioco?" (rilevamento caricamento) ---
 POPUP_CHECK_X   = 480
@@ -112,12 +122,18 @@ MSG_TAB_SISTEMA_Y   = 28
 MSG_LEGGI_X         = 95
 MSG_LEGGI_Y         = 510
 
+# --- Schedulazione task periodici ---
+# Intervallo minimo in ore tra due esecuzioni consecutive dello stesso task per istanza.
+# Il task viene saltato se già eseguito entro l'intervallo, con log del tempo rimanente.
+SCHEDULE_ORE_MESSAGGI  = 12   # raccolta ricompense messaggi
+SCHEDULE_ORE_ALLEANZA  = 12   # raccolta ricompense alleanza
+
 # --- Rifornimento alleanza ---
 RIFORNIMENTO_ABILITATO     = True    # False = disabilita senza toccare il codice
 RIFORNIMENTO_DESTINATARIO  = "FauMorfeus"
 RIFORNIMENTO_AVATAR        = "templates/avatar_faumorfeus.png"
 RIFORNIMENTO_BTN_TEMPLATE  = "templates/btn_risorse_approv.png"
-RIFORNIMENTO_SOGLIA_M      = 10.0   # non invia se deposito < 10M per risorsa
+RIFORNIMENTO_SOGLIA_M      = 5.0   # non invia se deposito < 10M per risorsa
 RIFORNIMENTO_QTA_POMODORO  = 999_000_000
 RIFORNIMENTO_QTA_LEGNO     = 999_000_000
 RIFORNIMENTO_QTA_ACCIAIO   = 0

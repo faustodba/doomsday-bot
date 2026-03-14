@@ -181,15 +181,11 @@ def leggi_eta_marcia(screen_path: str):
 # LETTURA RISORSE dalla barra in alto
 # ==============================================================================
 
-# Zone calibrate su screenshot reali 960x540.
-# Ogni zona inizia DOPO l'icona — taglio=0 su tutte.
-# Acciaio, petrolio e diamanti ora inclusi e verificati.
 ZONE_RISORSE = {
-    "pomodoro": {"zona": (463, 2, 525, 24), "taglio": 0},
-    "legno":    {"zona": (562, 2, 625, 24), "taglio": 0},
-    "acciaio":  {"zona": (658, 2, 715, 24), "taglio": 0},
-    "petrolio": {"zona": (748, 2, 802, 24), "taglio": 0},
-    "diamanti": {"zona": (857, 2, 925, 24), "taglio": 0},
+    "pomodoro": {"zona": (460, 0, 512, 28), "taglio": 0},
+    "legno":    {"zona": (530, 0, 618, 28), "taglio": 0},
+    "acciaio":  {"zona": (625, 0, 702, 28), "taglio": 20},
+    "petrolio": {"zona": (720, 0, 800, 28), "taglio": 0},
 }
 
 def _parse_valore(testo: str) -> float:
@@ -229,67 +225,37 @@ def _maschera_bianca(img: Image.Image, taglio_sx: int = 0) -> Image.Image:
     mask = np.zeros((h + pad*2, w + pad*2), dtype=np.uint8)
     for y in range(h):
         for x in range(taglio_sx, w):
-            if arr[y,x,0]>140 and arr[y,x,1]>140 and arr[y,x,2]>140:
+            if arr[y,x,0]>180 and arr[y,x,1]>180 and arr[y,x,2]>180:
                 mask[y+pad, x-taglio_sx+pad] = 255
     return Image.fromarray(mask)
 
-def leggi_risorsa(crop: Image.Image, taglio_sx: int = 0, debug: bool = False) -> float:
+def leggi_risorsa(crop: Image.Image, taglio_sx: int = 0) -> float:
     """Legge il valore di una risorsa da un crop 4x della barra. Ritorna float o -1."""
     try:
         mask = _maschera_bianca(crop, taglio_sx)
         cfg = "--psm 7 -c tessedit_char_whitelist=0123456789.MKB"
         with _tesseract_lock:
             testo = pytesseract.image_to_string(mask, config=cfg).strip()
-        val = _parse_valore(testo)
-        if debug:
-            print(f"  [OCR] raw='{testo}' → {val}")
-        return val
-    except Exception as e:
-        if debug:
-            print(f"  [OCR] errore: {e}")
+        return _parse_valore(testo)
+    except:
         return -1
-
-def _parse_diamanti(testo: str) -> int:
-    """
-    Converte testo OCR diamanti in intero.
-    Gestisce formati: "26,548"  "26548"  "26.548"
-    Ritorna intero >= 0 oppure -1 se non leggibile.
-    """
-    testo = testo.strip().replace(',', '').replace('.', '').replace(' ', '')
-    nums = re.findall(r'\d+', testo)
-    if nums:
-        val = int(''.join(nums))
-        # Sanity check: diamanti tipicamente < 10M
-        return val if val < 10_000_000 else -1
-    return -1
-
 
 def leggi_risorse(screen_path: str) -> dict:
     """
     Legge tutte le risorse dalla barra in alto.
-    Ritorna dict con valori in unità assolute:
-      pomodoro, legno, acciaio, petrolio: float (es. 46900000.0) o -1
-      diamanti: int (es. 26548) o -1
+    Ritorna dict: {"pomodoro": 25600000, "legno": 64900000, ...}
     """
     import adb as _adb
     risultati = {}
     for nome, info in ZONE_RISORSE.items():
         crop = _adb.crop_zona(screen_path, info["zona"])
-        if not crop:
-            risultati[nome] = -1
-            continue
-        w, h = crop.size
-        crop4x = crop.resize((w*4, h*4), Image.LANCZOS)
-        if nome == "diamanti":
-            # Diamanti: numero intero puro, parser dedicato
-            mask = _maschera_bianca(crop4x, info["taglio"])
-            cfg = "--psm 7 -c tessedit_char_whitelist=0123456789,."
-            with _tesseract_lock:
-                testo = pytesseract.image_to_string(mask, config=cfg).strip()
-            risultati[nome] = _parse_diamanti(testo)
-        else:
+        if crop:
+            w, h = crop.size
+            crop4x = crop.resize((w*4, h*4), Image.NEAREST)
             val = leggi_risorsa(crop4x, info["taglio"])
             risultati[nome] = val
+        else:
+            risultati[nome] = -1
     return risultati
 
 
@@ -363,72 +329,3 @@ def leggi_coordinate_nodo(screen_path):
 
     except Exception:
         return None
-
-
-# ==============================================================================
-#  leggi_numero_zona / leggi_testo_zona
-#  Funzioni di supporto per rifornimento.py
-#  Lettura OCR da zona arbitraria dello screenshot (path file)
-# ==============================================================================
-
-def leggi_numero_zona(screen_path: str, zona: tuple) -> float:
-    """
-    Legge un valore numerico da una zona dello screenshot.
-    zona: (x1, y1, x2, y2) — risoluzione 960x540
-    Ritorna float (unità assolute, es. 20000000.0) oppure -1 se OCR fallisce.
-    Gestisce formati: "20,000,000"  "20.5M"  "20M"
-    Usata da rifornimento.py per leggere il residuo giornaliero.
-    """
-    try:
-        img  = Image.open(screen_path)
-        crop = img.crop(zona)
-        w, h = crop.size
-        # Upscale 4x + binarizzazione
-        crop4x = crop.resize((w * 4, h * 4), Image.LANCZOS)
-        gray   = crop4x.convert("L")
-        bw     = gray.point(lambda p: 255 if p > 120 else 0)
-
-        cfg = "--psm 7 -c tessedit_char_whitelist=0123456789,.MKB"
-        with _tesseract_lock:
-            testo = pytesseract.image_to_string(bw, config=cfg).strip()
-
-        if not testo:
-            return -1
-
-        # Prova con _parse_valore (gestisce M/K/B)
-        val = _parse_valore(testo)
-        if val > 0:
-            return val
-
-        # Fallback: numero puro con separatori migliaia (es. "20,000,000")
-        testo_clean = re.sub(r'[,.]', '', testo)
-        if testo_clean.isdigit():
-            return float(testo_clean)
-
-        return -1
-    except Exception:
-        return -1
-
-
-def leggi_testo_zona(screen_path: str, zona: tuple) -> str:
-    """
-    Legge testo grezzo da una zona dello screenshot.
-    zona: (x1, y1, x2, y2) — risoluzione 960x540
-    Ritorna stringa (es. "00:00:54") oppure "" se OCR fallisce.
-    Usata da rifornimento.py per leggere il tempo di percorrenza.
-    """
-    try:
-        img  = Image.open(screen_path)
-        crop = img.crop(zona)
-        w, h = crop.size
-        crop4x = crop.resize((w * 4, h * 4), Image.LANCZOS)
-        gray   = crop4x.convert("L")
-        bw     = gray.point(lambda p: 255 if p > 120 else 0)
-
-        cfg = "--psm 7 -c tessedit_char_whitelist=0123456789:. "
-        with _tesseract_lock:
-            testo = pytesseract.image_to_string(bw, config=cfg).strip()
-
-        return testo
-    except Exception:
-        return ""

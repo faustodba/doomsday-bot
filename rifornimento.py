@@ -30,6 +30,7 @@ import stato
 import debug
 import config
 import log as _log
+import status as _status
 
 # ------------------------------------------------------------------------------
 # Coordinate navigazione (risoluzione 960x540)
@@ -133,67 +134,145 @@ RIFORNIMENTO_ABILITATO = False
 
 # ------------------------------------------------------------------------------
 # Gestione stato giornaliero rifornimento (quota_esaurita + reset 01:00 UTC)
+#
+# STRUTTURA FILE JSON:
+#   {
+#     "quota_esaurita": true/false,
+#     "ultimo_reset_utc": "2026-03-13T01:00:00+00:00"   ← timestamp reset in vigore
+#   }
+#
+# LOGICA RESET:
+#   Il gioco azzera le provviste ogni giorno alle 01:00 UTC.
+#   `ultimo_reset_utc` memorizza il reset-slot in vigore al momento del salvataggio
+#   (es. 2026-03-13T01:00:00 se salviamo tra 01:00 del 13 e 01:00 del 14).
+#   Al prossimo controllo, se il reset-slot corrente è più recente → nuovo giorno → reset.
+#
+# CASI GESTITI:
+#   1. File non esiste        → crea con quota_esaurita=False (prima esecuzione)
+#   2. quota_esaurita=False   → procedi normalmente
+#   3. quota_esaurita=True  +  reset_corrente > ultimo_reset_utc → nuovo giorno → reset a False
+#   4. quota_esaurita=True  +  stesso reset-slot                 → skip (quota ancora esaurita)
+#   5. Stato corrotto/legacy  → reset per sicurezza (non bloccare indefinitamente)
+#
+# ISOLAMENTO: file separato per istanza via nome+porta ADB (es. rifornimento_stato_FAU_01_5615.json)
 # ------------------------------------------------------------------------------
-def _path_stato(nome: str) -> str:
-    return os.path.join(config.BOT_DIR, f"rifornimento_stato_{nome}.json")
 
-def _ora_reset_utc() -> datetime:
-    """Ritorna il datetime dell'ultimo reset gioco (01:00 UTC di oggi o ieri)."""
+def _safe_stato_id(val: str) -> str:
+    """Normalizza porta/serial ADB per uso in filename (solo [A-Za-z0-9_-])."""
+    s = re.sub(r'[^A-Za-z0-9_-]+', '_', str(val)).strip('_')
+    return s or 'noid'
+
+
+def _path_stato(nome: str, porta: str = "") -> str:
+    """Path file stato giornaliero isolato per istanza/device."""
+    suff = _safe_stato_id(porta) if porta else 'noporta'
+    return os.path.join(config.BOT_DIR, f"rifornimento_stato_{nome}_{suff}.json")
+
+
+def _reset_slot_corrente() -> datetime:
+    """
+    Ritorna il datetime del reset-slot attualmente in vigore (01:00 UTC di oggi o ieri).
+    Esempio: se ora è 00:30 UTC del 14, il reset in vigore è 01:00 UTC del 13.
+             se ora è 02:00 UTC del 14, il reset in vigore è 01:00 UTC del 14.
+    """
     now = datetime.now(timezone.utc)
     reset_oggi = now.replace(hour=1, minute=0, second=0, microsecond=0)
-    if now < reset_oggi:
-        reset_oggi -= timedelta(days=1)
-    return reset_oggi
+    return reset_oggi if now >= reset_oggi else reset_oggi - timedelta(days=1)
 
-def _carica_stato(nome: str) -> dict:
-    path = _path_stato(nome)
+
+def _carica_stato(nome: str, porta: str = "") -> dict:
+    """
+    Legge il file stato. Se non esiste lo crea con quota_esaurita=False.
+    In caso di errore di lettura/parsing ritorna lo stato di default (non blocca).
+    """
+    path = _path_stato(nome, porta)
     default = {"quota_esaurita": False, "ultimo_reset_utc": ""}
+
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            return {**default, **json.load(f)}
-    except Exception:
+            dati = json.load(f)
+        # Merge con default per tollerare campi mancanti in versioni precedenti
+        return {**default, **dati}
+    except FileNotFoundError:
+        # Prima esecuzione: crea subito il file (evita ricreazione ad ogni ciclo)
+        _salva_stato(nome, porta, False)
+        return default
+    except Exception as e:
+        # JSON corrotto o errore I/O: reset per sicurezza, non bloccare
+        print(f"[RIF] WARN _carica_stato: {e} — uso default")
         return default
 
-def _salva_stato(nome: str, quota_esaurita: bool) -> None:
-    path = _path_stato(nome)
+
+def _salva_stato(nome: str, porta: str, quota_esaurita: bool) -> None:
+    """
+    Salva lo stato sul file JSON. Scrive sempre il reset-slot corrente come
+    `ultimo_reset_utc` così il confronto del giorno successivo funziona correttamente.
+    """
+    path = _path_stato(nome, porta)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump({
                 "quota_esaurita": quota_esaurita,
-                "ultimo_reset_utc": _ora_reset_utc().isoformat(),
+                "ultimo_reset_utc": _reset_slot_corrente().isoformat(),
             }, f, indent=2)
     except Exception as e:
-        print(f"[RIF] WARN: impossibile salvare stato: {e}")
+        print(f"[RIF] WARN _salva_stato: impossibile scrivere {path}: {e}")
 
-def _controlla_reset(nome: str, logger=None) -> bool:
+
+def _controlla_reset(nome: str, porta: str = "", logger=None) -> bool:
     """
-    Ritorna True se la quota giornaliera è esaurita (skip rifornimento).
-    Azzera automaticamente se è passato il reset delle 01:00 UTC.
+    Controlla se il rifornimento può essere eseguito oggi.
+
+    Ritorna:
+        False → procedi con il rifornimento (quota disponibile o appena resettata)
+        True  → salta il rifornimento (quota già esaurita per oggi)
+
+    Effetti collaterali:
+        - Crea il file stato se non esiste (quota_esaurita=False)
+        - Resetta quota_esaurita=False se è passato il reset giornaliero
     """
     def log(msg):
-        if logger: logger(nome, f"[RIF] {msg}")
+        if logger:
+            logger(nome, f"[RIF] {msg}")
 
-    stato_rif = _carica_stato(nome)
-    reset_corrente = _ora_reset_utc()
+    stato_rif      = _carica_stato(nome, porta)
+    reset_corrente = _reset_slot_corrente()
 
-    # Nuovo giorno: reset avvenuto dopo l'ultimo salvataggio
-    if stato_rif["ultimo_reset_utc"]:
-        try:
-            ultimo = datetime.fromisoformat(stato_rif["ultimo_reset_utc"])
-            if reset_corrente > ultimo:
-                log(f"Reset giornaliero ({reset_corrente.strftime('%Y-%m-%d %H:%M UTC')}) — quota ripristinata")
-                _salva_stato(nome, False)
-                return False
-        except Exception:
-            pass
+    # --- Caso 2: quota non esaurita → procedi ---
+    if not stato_rif.get("quota_esaurita"):
+        return False
 
-    if stato_rif["quota_esaurita"]:
-        prossimo = reset_corrente + timedelta(days=1)
-        manca = int((prossimo - datetime.now(timezone.utc)).total_seconds() / 60)
-        log(f"Quota giornaliera esaurita — prossimo reset tra {manca} min ({prossimo.strftime('%H:%M UTC')})")
-        return True
+    # --- Da qui: quota_esaurita=True → verifico se è scaduta ---
 
-    return False
+    # Caso 5: stato corrotto — manca timestamp → non bloccare indefinitamente
+    raw_ts = stato_rif.get("ultimo_reset_utc", "")
+    if not raw_ts:
+        log("quota_esaurita=True ma ultimo_reset_utc mancante — resetto per sicurezza")
+        _salva_stato(nome, porta, False)
+        return False
+
+    # Caso 5b: timestamp non parsabile → reset per sicurezza
+    try:
+        ultimo = datetime.fromisoformat(raw_ts)
+    except Exception:
+        log(f"ultimo_reset_utc non parsabile ('{raw_ts}') — resetto per sicurezza")
+        _salva_stato(nome, porta, False)
+        return False
+
+    # Caso 3: nuovo giorno (reset-slot corrente più recente dell'ultimo salvato)
+    if reset_corrente > ultimo:
+        log(f"Nuovo reset giornaliero rilevato "
+            f"({reset_corrente.strftime('%Y-%m-%d %H:%M UTC')}) — quota ripristinata")
+        _salva_stato(nome, porta, False)
+        return False
+
+    # Caso 4: stesso reset-slot → quota ancora esaurita oggi
+    prossimo = reset_corrente + timedelta(days=1)
+    manca_min = int((prossimo - datetime.now(timezone.utc)).total_seconds() / 60)
+    log(f"Quota giornaliera esaurita — prossimo reset tra {manca_min} min "
+        f"({prossimo.strftime('%H:%M UTC')})")
+    return True
 
 
 # ------------------------------------------------------------------------------
@@ -889,7 +968,7 @@ def esegui_rifornimento(porta: str, nome: str,
         return 0
 
     # Controlla quota giornaliera (skip se già esaurita oggi)
-    if _controlla_reset(nome, logger):
+    if _controlla_reset(nome, porta, logger):
         return 0
 
     nome_rifugio = getattr(config, "RIFORNIMENTO_DESTINATARIO", "")
@@ -1015,8 +1094,8 @@ def esegui_rifornimento(porta: str, nome: str,
 
         if quota_esaurita:
             log("Provviste giornaliere esaurite - stop ciclo rifornimento")
-            _salva_stato(nome, True)
-            log(f"Quota salvata su file: {_path_stato(nome)}")
+            _salva_stato(nome, porta, True)
+            log(f"Quota salvata su file: {_path_stato(nome, porta)}")
             stato.vai_in_home(porta, nome, logger)
             break
 
@@ -1037,6 +1116,27 @@ def esegui_rifornimento(porta: str, nome: str,
         # 6. Torna in home e stabilizza
         stato.vai_in_home(porta, nome, logger)
         time.sleep(3.0)
+
+        # 7. Lettura OCR post-invio — calcola delta reale risorse uscite dal deposito
+        #    risorse_reali = snapshot PRE (letto al passo 2 sopra, ancora valido)
+        #    risorse_post  = lettura DOPO il ritorno in home
+        try:
+            screen_post = adb.screenshot(porta)
+            risorse_post = ocr.leggi_risorse(screen_post) if screen_post else {}
+            if all(risorse_post.get(r, -1) < 0 for r in ("pomodoro", "legno")):
+                time.sleep(2.0)
+                screen_post = adb.screenshot(porta)
+                risorse_post = ocr.leggi_risorse(screen_post) if screen_post else {}
+            _status.istanza_rifornimento(
+                nome,
+                risorse_reali.get("pomodoro", -1), risorse_reali.get("legno",    -1),
+                risorse_reali.get("acciaio",  -1), risorse_reali.get("petrolio", -1),
+                risorse_post.get("pomodoro",  -1), risorse_post.get("legno",     -1),
+                risorse_post.get("acciaio",   -1), risorse_post.get("petrolio",  -1),
+            )
+            log("Delta rifornimento registrato in status")
+        except Exception as _e:
+            log(f"Registrazione delta rifornimento fallita (non bloccante): {_e}")
 
     log(f"Rifornimento completato: {spedizioni} spedizioni totali")
     return spedizioni

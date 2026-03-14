@@ -7,16 +7,23 @@
 #    2. Tap tab ALLEANZA → Leggi e richiedi tutto
 #    3. Tap tab SISTEMA  → Leggi e richiedi tutto
 #    4. BACK
+#
+#  Schedulazione:
+#    Eseguito al massimo ogni SCHEDULE_ORE_MESSAGGI ore per istanza (default 12h).
+#    Se già eseguito entro l'intervallo, viene saltato con log del tempo rimanente.
+#    Stato persistito in: schedule_stato_{nome}_{porta}.json
 # ==============================================================================
 
 import time
 import adb
 import config
+import scheduler
 
 
 def raccolta_messaggi(porta: str, nome: str, logger=None) -> bool:
     """
     Raccoglie le ricompense dalla sezione Messaggi.
+    Salta silenziosamente se già eseguito nelle ultime SCHEDULE_ORE_MESSAGGI ore.
 
     Args:
         porta:   porta ADB dell'istanza (es. "5555")
@@ -24,10 +31,15 @@ def raccolta_messaggi(porta: str, nome: str, logger=None) -> bool:
         logger:  callable(nome, msg) oppure None
 
     Returns:
-        True se completato senza errori, False in caso di eccezione.
+        True  se completato senza errori o saltato per schedulazione
+        False in caso di eccezione durante l'esecuzione
     """
     def log(msg):
         if logger: logger(nome, msg)
+
+    # Verifica schedulazione — salta se già eseguito entro l'intervallo
+    if not scheduler.deve_eseguire(nome, porta, "messaggi", logger):
+        return True
 
     try:
         log("Inizio raccolta messaggi")
@@ -55,8 +67,13 @@ def raccolta_messaggi(porta: str, nome: str, logger=None) -> bool:
         time.sleep(1.0)
 
         log("Raccolta messaggi completata")
+
+        # Registra esecuzione riuscita
+        scheduler.registra_esecuzione(nome, porta, "messaggi")
         return True
 
     except Exception as e:
         log(f"Errore raccolta messaggi: {e}")
+        # Non registriamo l'esecuzione in caso di errore:
+        # al prossimo ciclo verrà ritentata
         return False

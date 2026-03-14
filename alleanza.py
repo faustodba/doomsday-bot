@@ -7,7 +7,12 @@
 #    2. Tap icona Dono  → apre direttamente su "Ricompense del negozio"
 #    3. Tab "Ricompense del negozio" → Tap "Rivendica" x10  (già attivo)
 #    4. Tab "Ricompense attività"    → Tap "Raccogli tutto" (1 click)
-#    5. Back x2 → torna in home
+#    5. Back x3 → torna in home
+#
+#  Schedulazione:
+#    Eseguito al massimo ogni SCHEDULE_ORE_ALLEANZA ore per istanza (default 12h).
+#    Se già eseguito entro l'intervallo, viene saltato con log del tempo rimanente.
+#    Stato persistito in: schedule_stato_{nome}_{porta}.json
 #
 #  Risoluzione ADB: 960x540
 # ==============================================================================
@@ -15,6 +20,7 @@
 import time
 import adb
 import config
+import scheduler
 
 
 # ------------------------------------------------------------------------------
@@ -37,6 +43,7 @@ RIVENDICA_CLICK = 10
 def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
     """
     Raccoglie le ricompense dalla sezione Alleanza -> Dono.
+    Salta silenziosamente se già eseguito nelle ultime SCHEDULE_ORE_ALLEANZA ore.
 
     Args:
         porta:   porta ADB dell'istanza (es. "5555")
@@ -44,10 +51,15 @@ def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
         logger:  callable(nome, msg) oppure None
 
     Returns:
-        True se completato senza errori, False in caso di eccezione.
+        True  se completato senza errori o saltato per schedulazione
+        False in caso di eccezione durante l'esecuzione
     """
     def log(msg):
         if logger: logger(nome, msg)
+
+    # Verifica schedulazione — salta se già eseguito entro l'intervallo
+    if not scheduler.deve_eseguire(nome, porta, "alleanza", logger):
+        return True
 
     try:
         log("Inizio raccolta ricompense Alleanza")
@@ -87,11 +99,14 @@ def raccolta_alleanza(porta: str, nome: str, logger=None) -> bool:
         time.sleep(1.0)
 
         log("Raccolta ricompense Alleanza completata")
+
+        # Registra esecuzione riuscita
+        scheduler.registra_esecuzione(nome, porta, "alleanza")
         return True
 
     except Exception as e:
         log(f"Errore raccolta Alleanza: {e}")
-        # Tentativo di recupero con back x2
+        # Non registriamo in caso di errore: verrà ritentata al prossimo ciclo
         try:
             adb.keyevent(porta, "KEYCODE_BACK")
             time.sleep(0.5)

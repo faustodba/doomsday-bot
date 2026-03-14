@@ -21,14 +21,14 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 
 ### Istanze configurate
 - **FAU_00, FAU_01, FAU_02, FAU_03, FAU_04, FAU_05, FAU_07, FAU_08** (8 istanze totali)
-- Max **2 istanze in parallelo** (semaforo)
+- Max **1 istanza in parallelo** (semaforo — modificato da 2 a 1 in produzione)
 - Cicli da **10 minuti**
 - Timeout per istanza: **180 secondi**
 
 ### Emulatori supportati
 - **BlueStacks** — avviato e stoppato per ogni ciclo
 - **MuMuPlayer 12** — integrato con Provider Pattern (`config.ADB_EXE`)
-- Modulo condiviso: `emulatore_base.py` (elimina duplicazione di codice)
+- Modulo condiviso: `emulatore_base.py`
 
 ### Risoluzione di riferimento
 - **960x540** (coordinate normalizzate su questa risoluzione)
@@ -39,39 +39,40 @@ Bot Python per l'automazione del gioco **Doomsday: Last Survivors** su emulatori
 
 | Modulo | Descrizione |
 |--------|-------------|
-| `main.py` | Entry point, argomenti `--istanze` / `--emulatore` (retrocompat) |
+| `main.py` | Entry point, argomenti `--istanze` / `--emulatore` |
 | `raccolta.py` | Flusso principale raccolta risorse |
-| `alleanza.py` | Automazione menu Alleanza/Dono |
-| `messaggi.py` | Gestione messaggi in-game |
-| `rifornimento.py` | Invio rifornimenti ad altri giocatori (V5.12) |
+| `alleanza.py` | Automazione menu Alleanza/Dono — schedulata ogni 12h |
+| `messaggi.py` | Gestione messaggi in-game — schedulata ogni 12h |
+| `rifornimento.py` | Invio rifornimenti a FauMorfeus (V5.12) |
+| `scheduler.py` | **NUOVO** Schedulazione task periodici (messaggi, alleanza) |
 | `bluestacks.py` | Gestione ciclo vita BlueStacks |
 | `mumu.py` | Gestione ciclo vita MuMuPlayer 12 |
 | `emulatore_base.py` | Modulo base condiviso tra emulatori |
 | `adb.py` | Comandi ADB (tap, screenshot, keycode) |
 | `ocr.py` | Lettura testo da screenshot (Tesseract) |
 | `stato.py` | Macchina a stati per ogni istanza |
-| `config.py` | Configurazione centralizzata (coordinate, soglie, percorsi) |
-| `timing.py` | EWMA adaptive timing (alpha=0.3, outlier z-score detection) |
+| `config.py` | Configurazione centralizzata |
+| `timing.py` | EWMA adaptive timing |
 | `log.py` | Logging centralizzato |
-| `debug.py` | Utilities debug, `debug.init_ciclo(ciclo)` |
-| `status.py` | Scrittura `status.json` per dashboard |
+| `debug.py` | Utilities debug |
+| `status.py` | Scrittura `status.json` per dashboard — con persistenza riavvii |
 | `report.py` | Generazione report sessione |
-| `launcher.py` | GUI tkinter: radio BS/MuMu, checkbox istanze, stato real-time |
+| `launcher.py` | GUI tkinter |
+| `dashboard.html` | Dashboard web real-time (fetch ogni 3s) |
+| `dashboard_server.py` | Mini HTTP server porta 8080 |
 
-### File di test presenti nel repo
-`test_alleanza.py`, `test_coordinate.py`, `test_coordinate2.py`, `test_messaggi.py`,
-`test_mumu.py`, `test_ocr.py`, `test_ocr_nodo.py`, `test_rifornimento.py`,
-`test_rifornimento_steps.py`, `test_tap.py`
-
-### File patch presenti nel repo
-`main_patch_blacklist.py`, `ocr_patch_leggi_coordinate_nodo.py`
+### File di stato runtime per istanza
+```
+rifornimento_stato_{nome}_{porta}.json   ← quota giornaliera (reset 01:00 UTC)
+schedule_stato_{nome}_{porta}.json       ← timestamp ultima esecuzione messaggi/alleanza
+```
 
 ---
 
 ## Flusso raccolta_istanza (ordine esecuzione)
 
 ```
-messaggi → alleanza → rifornimento (in HOME) → vai_in_mappa → raccolta risorse
+messaggi (se >12h) → alleanza (se >12h) → rifornimento (HOME) → vai_in_mappa → raccolta risorse
 ```
 
 ---
@@ -87,120 +88,184 @@ messaggi → alleanza → rifornimento (in HOME) → vai_in_mappa → raccolta r
 | `COORD_TAB_ATTIVITA` | (600, 75) |
 | `COORD_RIVENDICA` | (856, 240) |
 | `COORD_RACCOGLI_TUTTO` | (856, 505) |
-| `RIVENDICA_CLICK` | 10 (click singoli, è a pagamento) |
+| `RIVENDICA_CLICK` | 10 |
 
-**Flusso alleanza:** Alleanza → Dono → Negozio (Rivendica x10 singoli) → Attività (Raccogli tutto, gratis) → Back x3
-> Il menu Dono si apre già sul tab Negozio.
+### OCR risorse deposito — calibrato 14/03/2026
+| Risorsa | Zona (x1,y1,x2,y2) | Note |
+|---------|---------------------|------|
+| Pomodoro | (463, 2, 525, 24) | Solo testo, icona esclusa |
+| Legno | (562, 2, 625, 24) | Solo testo, icona esclusa |
+| Acciaio | (658, 2, 715, 24) | Solo testo, icona esclusa |
+| Petrolio | (748, 2, 802, 24) | Solo testo, icona esclusa |
+| Diamanti | (857, 2, 925, 24) | Intero, parser dedicato `_parse_diamanti()` |
+
+> Tutti taglio_sx=0. Calibrate su screenshot reali 960x540 (4 istanze verificate).
+
+### OCR ETA Marcia — calibrato 14/03/2026
+| Chiave config | Valore |
+|---------------|--------|
+| `OCR_MARCIA_ETA_ZONA` | (650, 440, 790, 465) |
+| `OCR_MARCIA_ETA_BASE_W/H` | 960 / 540 |
+| `OCR_MARCIA_ETA_MARGINE_S` | 5 |
+| `OCR_MARCIA_ETA_MIN_S` | 8 |
+
+> Test su 3 screenshot reali: 78s, 110s, 61s — tutti corretti.
 
 ### OCR nodo (blacklist)
 | Costante | Valore |
 |----------|--------|
 | `TAP_LENTE_COORD` | (380, 18) |
-| Zona OCR coordinate X | (430, 125, 530, 155) |
-| Zona OCR coordinate Y | (535, 125, 635, 155) |
-| Zona OCR nodo (fix) | (240, 12, 380, 25) + OTSU |
+| Zona OCR X | (430, 125, 530, 155) |
+| Zona OCR Y | (535, 125, 635, 155) |
 
-**Flusso blacklist:** CERCA → sleep 1.5s → tap lente → sleep 0.8s → screenshot → OCR → check blacklist → tap nodo (chiude popup) oppure tap lente grande se in blacklist
-
-> ⚠️ Problema noto: `cx=None` occasionale — fix: aumentare delay dopo TAP_LENTE_COORD (attualmente 800ms)
-
-### rifornimento.py (V5.12)
+### rifornimento.py
 | Costante | Valore |
 |----------|--------|
-| `RIFORNIMENTO_DESTINATARIO` | configurabile in config.py |
-| `RIFORNIMENTO_SOGLIA_M` | 10.0M — non invia se deposito sotto soglia |
-| `RIFORNIMENTO_QTA_*` | valore alto (es. 999M) — il gioco applica il cap automaticamente |
-| `RIFORNIMENTO_ABILITATO` | True/False — flag abilitazione in config.py |
-| Reset quota giornaliera | 01:00 UTC — stato salvato in `rifornimento_stato_{nome}.json` |
-
-**Flusso rifornimento:**
-1. Controlla quota giornaliera (`rifornimento_stato_{nome}.json`) — skip se esaurita
-2. `vai_in_home` + legge deposito reale via OCR
-3. Seleziona risorsa con rotazione (pomodoro → legno → pomodoro...)
-4. Naviga Alleanza → Membri → apre toggle R4/R3/R2/R1 (cerca avatar in parallelo)
-5. Trova avatar FauMorfeus via template matching
-6. Apre maschera → legge tassa OCR → compila quantità → VAI
-7. Coda volo `deque(timestamp, eta_ar)` per calcolo attesa ottimale slot
-8. Quando provviste = 0 → salva stato quota esaurita su file
+| `RIFORNIMENTO_DESTINATARIO` | FauMorfeus |
+| `RIFORNIMENTO_SOGLIA_M` | 5.0M |
+| `RIFORNIMENTO_QTA_*` | 999M (il gioco applica il cap) |
+| Reset quota | 01:00 UTC giornaliero |
 
 ---
 
-## Logica raccolta risorse (raccolta.py)
+## Logica raccolta risorse (raccolta.py V5.14)
+
+### Lettura risorse
+- **Inizio ciclo:** `istanza_risorse_inizio()` — snapshot deposito prima delle squadre
+- **Fine ciclo:** `istanza_risorse_fine()` — snapshot dopo `vai_in_home`
+- **Diamanti:** letti dalla barra superiore, `istanza_diamanti()`
+- **Log visivo:** `🍅 40.5M  🪵 36.8M  ⚙ 8.5M  🛢 5.5M  💎 26548`
+
+### ETA Marcia
+- Letta dopo TAP_SQUADRA via `ocr.leggi_eta_marcia(screen_pre)`
+- Attesa blacklist dinamica: `min(ETA + margine, BLACKLIST_ATTESA_NODO)`
+- Log: `ETA marcia: 78s (1m18s)` → `Nodo 698_541 -> COMMITTED (ETA=78s)`
 
 ### Loop invio squadre
-- **Loop `while`**: continua finché `attive_correnti < obiettivo` (obiettivo = totale slot)
-- **Lettura reale** del contatore squadre dopo ogni MARCIA (non calcolo progressivo)
-- **Max 3 fallimenti consecutivi** prima di abbandonare — reset ad ogni conferma squadra
-- **Blacklist TTL fisso:** 120s — il nodo NON viene rimosso alla conferma marcia
-- **Blacklist rilasciata** se errore prima del tap MARCIA (marcia_inviata=False)
-- **Blacklist rilasciata** se squadra respinta (contatore invariato dopo retry)
-- **OCR fail post-MARCIA:** retry dopo 3s prima di contare come fallimento
-- **Tipi bloccati:** se nodo sempre in blacklist per un tipo → skip tutte le squadre di quel tipo
-- **Uscita anticipata** se tutti i tipi disponibili sono bloccati
+- Loop `while attive_correnti < obiettivo`
+- Lettura reale contatore post-MARCIA
+- Max 3 fallimenti consecutivi
+- Blacklist TTL dinamico basato su ETA reale
 
 ---
 
-## Logica timing (timing.py)
-- **EWMA** alpha=0.3
-- **Outlier detection** z-score
-- **Wait minimo:** 30 secondi prima del polling adattivo
+## Calcolo produzione per istanza (status.py V5.14)
+
+### Formula
+```
+produzione_N = (res_inizio_N+1 - res_inizio_N) + res_inviato_N
+```
+
+### Implementazione
+- `init_ciclo()` conserva: `res_inizio` → `res_inizio_ciclo_prec`, `res_inviato` → `res_inviato_prec`
+- `istanza_risorse_inizio()` calcola produzione del ciclo precedente
+- Disponibile dal **2° ciclo** in poi
+
+### Campi status.json per istanza
+```json
+{
+  "res_inizio":            {},
+  "res_inizio_ciclo_prec": {},
+  "res_fine":              {},
+  "res_inviato":           {},
+  "res_inviato_prec":      {},
+  "produzione":            {},
+  "dati_storici":          false,
+  "ts_ultimo_ciclo":       "14/03 08:36"
+}
+```
+
+### Delta rifornimento reale
+- `rifornimento.py` legge deposito PRE e POST ogni VAI
+- Chiama `status.istanza_rifornimento(nome, pom_pre, leg_pre, ..., pom_post, leg_post, ...)`
+- Delta accumulato in `res_inviato` per tutta la durata del ciclo
 
 ---
 
-## Logica reset / watchdog
-- **Banner dismissal:** 3× KEYCODE_BACK con conferma
-- **OCR-fail reset post-march:** max 5 tentativi
-- **Watchdog:** crash detection + restart automatico
-- **Timeout per istanza:** 180s
+## Schedulazione task periodici (scheduler.py)
+
+| Task | Intervallo | Config key |
+|------|-----------|------------|
+| messaggi | 12 ore | `SCHEDULE_ORE_MESSAGGI` |
+| alleanza | 12 ore | `SCHEDULE_ORE_ALLEANZA` |
+
+- File stato: `schedule_stato_{nome}_{porta}.json`
+- Skip log: `[SCHED] messaggi: già eseguito — skip (prossima tra 11h 27m)`
+- Registrazione solo dopo esecuzione riuscita
+- Rifornimento gestisce stato separatamente (non migrato)
 
 ---
 
-## launcher.py (GUI tkinter)
-- Radio button: BlueStacks / MuMuPlayer
-- Checkbox per selezione istanze (da config.py)
-- Stato real-time via `status.json`
-- Dashboard HTML con auto-refresh ogni 3 secondi
+## Dashboard (dashboard.html)
 
-> ⚠️ **Problema aperto:** launcher non funzionante — errore in `bluestacks.py` → `emulatore_base.py` → `attendi_e_raccogli_istanza`
+### Sezioni
+- Riepilogo istanze (running/avvio/done/errori/inattive/squadre)
+- Risorse totali aggregate (pomodoro/legno/acciaio/petrolio/diamanti)
+- **Inviato FauMorfeus ciclo corrente** — aggregato per risorsa ← NUOVO
+- Stato istanze (card per istanza)
+- Storico cicli (squadre/durata/sq-h/produzione/inviato) ← NUOVO colonna inviato
+
+### Card istanza mostra
+- Deposito attuale (con diamanti) ← NUOVO diamanti
+- Snapshot inter-ciclo (inizio_prec → inizio_corr)
+- Produzione ciclo (verde con segno +)
+- Inviato FauMorfeus corrente + precedente (giallo)
+- Durata/errori/ts_inizio
+
+### Gestione riavvio bot
+- `status.py` carica `status.json` da disco all'import — dati preservati
+- Badge **"storico DD/MM HH:MM"** grigio corsivo per istanze non ancora riavviate
+- Istanze storiche in fondo alla griglia, opacità 0.75
+- `istanza_avvio()` resetta `dati_storici=False`
+
+### Avvio server
+```bash
+python dashboard_server.py
+# http://localhost:8080/dashboard.html
+```
 
 ---
 
 ## Problemi aperti / Da risolvere
-- [ ] **Launcher** non funzionante (vedi sopra)
+- [ ] **Launcher** non funzionante — errore `bluestacks.py` → `emulatore_base.py` → `attendi_e_raccogli_istanza`
 - [ ] **cx=None** occasionale nella blacklist nodi (aumentare delay TAP_LENTE)
 
 ---
 
-## Decisioni architetturali già prese (non ridiscutere)
-- **Provider Pattern** per selezione ADB exe (`config.ADB_EXE`)
-- **emulatore_base.py** come modulo condiviso tra BlueStacks e MuMu
-- **Semaforo** per limitare a max 2 istanze parallele
-- **EWMA** per adaptive timing (non usare sleep fissi)
-- **Screenshot PRIMA del tap** sul nodo per OCR affidabile
-- **Loop while** per raccolta (non range fisso) — continua finché slot liberi
-- **Lettura reale** contatore post-MARCIA (non calcolo progressivo)
-- **3 fallimenti consecutivi** come soglia abbandono raccolta
-- **Quantità rifornimento alta** in config (es. 999M) — il gioco applica il cap, il bot non deve calcolarlo
-- **Tassa rifornimento letta OCR** dalla maschera ad ogni spedizione (non hardcodata)
-- **Quota giornaliera** salvata su file per istanza — reset automatico alle 01:00 UTC
+## Decisioni architetturali (non ridiscutere)
+- Provider Pattern per ADB exe (`config.ADB_EXE`)
+- `emulatore_base.py` condiviso tra BlueStacks e MuMu
+- EWMA adaptive timing
+- Screenshot PRIMA del tap nodo per OCR affidabile
+- Loop while per raccolta (non range fisso)
+- Lettura reale contatore post-MARCIA
+- 3 fallimenti consecutivi come soglia abbandono
+- Quantità rifornimento alta in config (il gioco applica il cap)
+- Tassa rifornimento letta OCR dalla maschera
+- Quota giornaliera su file per istanza (reset 01:00 UTC)
+- **Produzione inter-ciclo** (inizio_N+1 - inizio_N + inviato_N)
+- **Schedulazione 12h** messaggi/alleanza su file stato separato
+- **ETA marcia OCR** per attesa dinamica blacklist
+- **Persistenza dati storici** — status.json caricato all'import
 
 ---
 
-## Storico versioni principali
+## Storico versioni
 | Versione | Note |
 |----------|------|
-| V2 | AutoHotkey — 14 istanze Sandboxie, stabile |
-| V3 | Migrazione Python, singolo emulatore |
-| V4 | Multithreading, multi-emulatore, MuMu integration |
-| V5 | Aggiunta alleanza, messaggi, rifornimento, launcher, dashboard |
+| V2 | AutoHotkey — 14 istanze Sandboxie |
+| V3 | Python, singolo emulatore |
+| V4 | Multithreading, multi-emulatore, MuMu |
+| V5 | Alleanza, messaggi, rifornimento, launcher, dashboard |
 | V5.5 | Screenshot prima del tap nodo |
-| V5.6 | raccolta.py refactor |
-| V5.7 | rifornimento integrato nel flusso principale |
-| V5.8 | Fix blacklist TTL, fix report TypeError, fix cleanup PID |
-| V5.9 | Fix blacklist: prenotata dopo tap nodo, rilasciata su errore; lettura reale post-MARCIA; max 3 fallimenti consecutivi |
-| V5.10 | OCR fail post-MARCIA: retry 3s; loop while invece di range fisso |
-| V5.11 | rifornimento.py rebuild: template matching badge/frecce/avatar |
-| V5.12 | rifornimento completo: coda volo timestamp, tassa OCR, quota giornaliera con reset 01:00 UTC, flag RIFORNIMENTO_ABILITATO |
+| V5.9 | Blacklist rilasciata su errore, lettura reale post-MARCIA |
+| V5.10 | Loop while raccolta, OCR retry post-MARCIA |
+| V5.11 | rifornimento.py rebuild template matching |
+| V5.12 | rifornimento completo: coda volo, quota giornaliera |
+| V5.13 | Blacklist transazionale RESERVED/COMMITTED |
+| V5.13.1 | Fix SQUADRA hash check |
+| V5.13.2 | ETA marcia OCR + attesa dinamica blacklist |
+| V5.14 | OCR completo (acciaio+petrolio+diamanti), produzione inter-ciclo, schedulazione 12h messaggi/alleanza, dashboard dati storici+badge storico+diamanti+inviato aggregato, delta rifornimento OCR reale |
 
 ---
 
@@ -213,4 +278,4 @@ web_fetch → https://raw.githubusercontent.com/faustodba/doomsday-bot/main/CONT
 
 ---
 
-*Ultimo aggiornamento: 2026-03-13*
+*Ultimo aggiornamento: 2026-03-14*
